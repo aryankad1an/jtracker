@@ -67,17 +67,22 @@ struct ActivityEntry: Identifiable {
 struct Job: Identifiable, Decodable {
     var id: String = ""
     var company: String
+    /// The company's sector/industry, when known. Only fetched for the full
+    /// catalog (the Companies list); nil on the tracked-companies query.
+    var sector: String?
     var contacts: [Contact] = []
 
     enum CodingKeys: String, CodingKey {
         case id
         case company = "name"
+        case sector
         case contacts = "recruiters"
     }
 
-    init(id: String, company: String, contacts: [Contact] = []) {
+    init(id: String, company: String, sector: String? = nil, contacts: [Contact] = []) {
         self.id = id
         self.company = company
+        self.sector = sector
         self.contacts = contacts
     }
 
@@ -85,6 +90,7 @@ struct Job: Identifiable, Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         company = try c.decode(String.self, forKey: .company)
+        sector = try c.decodeIfPresent(String.self, forKey: .sector)
         contacts = try c.decodeIfPresent([Contact].self, forKey: .contacts) ?? []
     }
 }

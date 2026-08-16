@@ -97,11 +97,11 @@ private struct ActivityRow: View {
                     .lineLimit(1)
             }
 
-            Spacer(minLength: 8)
-
             Text(dateLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Spacer(minLength: 8)
 
             Image(systemName: "envelope.fill")
                 .font(.title3)

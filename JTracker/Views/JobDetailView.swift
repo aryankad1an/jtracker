@@ -15,9 +15,11 @@ struct JobDetailView: View {
     @State private var confirmingDelete = false
     @State private var pendingDelete: Contact?
 
-    /// Always read the live job from the store so edits show immediately.
+    /// Always read the live job from the store so edits show immediately. Looks in
+    /// the full catalog first, so a company opened from the Companies tab renders
+    /// even when it isn't tracked.
     private var job: Job? {
-        jobStore.jobs.first { $0.id == jobID }
+        jobStore.company(id: jobID)
     }
 
     /// All the company's cold mails, sorted by display name, in one list.
@@ -41,6 +43,7 @@ struct JobDetailView: View {
                     }
                     .listStyle(.plain)
                     .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
+                    .refreshable { await jobStore.load() }
                 }
             }
         }

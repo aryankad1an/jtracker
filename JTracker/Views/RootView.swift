@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The app's root: a bottom tab bar switching between Home, Profile, Templates.
-/// Owns the shared stores and injects them into the environment for all tabs.
+/// The app's root: a bottom tab bar (Home, Companies, Activity, Templates,
+/// Profile). Owns the shared stores and injects them into the environment.
 struct RootView: View {
     @State private var jobStore = JobStore()
     @State private var profileStore = ProfileStore()
@@ -78,6 +78,9 @@ struct RootView: View {
         TabView {
             HomeView()
                 .tabItem { Label("Home", systemImage: "house") }
+
+            CompaniesView()
+                .tabItem { Label("Companies", systemImage: "building.2") }
 
             ActivityView()
                 .tabItem { Label("Activity", systemImage: "tray.full") }

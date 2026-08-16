@@ -8,17 +8,19 @@ import Observation
 /// mirrors what's stored.
 @Observable
 final class JobStore {
-    /// The user's tracked companies, with recruiters and sent state.
+    /// The user's tracked companies, with recruiters and sent state. Drives Home's
+    /// "Tracking" section.
     private(set) var jobs: [Job] = []
+    /// Every company in the shared catalog, with recruiters and this user's sent
+    /// state overlaid. Drives the Companies list and Home's cross-company
+    /// "Suggested" section.
+    private(set) var allCompanies: [Job] = []
     /// The Activity feed: every recruiter the user has sent to, newest first.
     /// Loaded from the send history, so it's independent of which companies are
     /// currently tracked on Home.
     private(set) var activity: [ActivityEntry] = []
-    /// The full catalog, for the "add company" picker.
-    private(set) var catalog: [CatalogCompany] = []
 
     private(set) var isLoading = false
-    private(set) var isCatalogLoading = false
     var errorMessage: String?
 
     /// The connected Gmail address whose data we show. Set on sign-in.
@@ -81,84 +83,107 @@ final class JobStore {
 
     func clearError() { errorMessage = nil }
 
-    /// Catalog companies the user hasn't added to their home yet.
-    var availableCompanies: [CatalogCompany] {
-        let taken = Set(jobs.map(\.id))
-        return catalog.filter { !taken.contains($0.id) }
+    // MARK: - Lookups
+
+    /// A company by id, from the full catalog first (most complete) and then the
+    /// tracked list — so a detail screen works whether or not it's tracked.
+    func company(id: String) -> Job? {
+        allCompanies.first { $0.id == id } ?? jobs.first { $0.id == id }
+    }
+
+    /// Whether the company is on this user's Home.
+    func isTracked(_ id: String) -> Bool {
+        jobs.contains { $0.id == id }
+    }
+
+    /// Contacts across every company that can be cold-mailed (valid email) and
+    /// haven't been mailed in the last month — never-sent first, then oldest sent.
+    /// Powers Home's "Suggested" section.
+    var suggestedContacts: [(company: Job, contact: Contact)] {
+        let cutoff = Date().addingTimeInterval(-30 * 24 * 60 * 60)
+        var result: [(company: Job, contact: Contact)] = []
+        for company in allCompanies {
+            for contact in company.contacts where contact.email.contains("@") {
+                if !contact.isSent || (contact.sentAt ?? .distantPast) < cutoff {
+                    result.append((company, contact))
+                }
+            }
+        }
+        return result.sorted { a, b in
+            switch (a.contact.sentAt, b.contact.sentAt) {
+            case (nil, nil):
+                return a.company.company.localizedCaseInsensitiveCompare(b.company.company) == .orderedAscending
+            case (nil, _?): return true
+            case (_?, nil): return false
+            case let (l?, r?): return l < r
+            }
+        }
+    }
+
+    /// `suggestedContacts` grouped by company, preserving the flat list's urgency
+    /// order (a company appears at the position of its most-overdue contact).
+    var suggestedGroups: [(company: Job, contacts: [Contact])] {
+        var order: [String] = []
+        var byID: [String: (company: Job, contacts: [Contact])] = [:]
+        for item in suggestedContacts {
+            if byID[item.company.id] == nil {
+                byID[item.company.id] = (item.company, [])
+                order.append(item.company.id)
+            }
+            byID[item.company.id]?.contacts.append(item.contact)
+        }
+        return order.compactMap { byID[$0] }
     }
 
     // MARK: - Loading
 
-    /// Load the user's tracked companies (with recruiters + sent state).
+    /// Load the user's tracked companies and the full catalog (both with recruiters
+    /// + sent state), plus the Activity feed.
     func load() async {
         guard !isLoading else { return }
         isLoading = true
         errorMessage = nil
         do {
-            try await reloadJobs()
+            try await reloadAll()
         } catch {
             report(error)
         }
         isLoading = false
     }
 
-    /// Load the full catalog for the picker.
-    func loadCatalog() async {
-        isCatalogLoading = true
-        defer { isCatalogLoading = false }
-        do {
-            catalog = try await SupabaseAPI.fetchCatalog()
-        } catch {
-            report(error)
-        }
-    }
+    // MARK: - Tracking (home selection, syncs per account)
 
-    // MARK: - Company mutations (home selection syncs per account)
-
-    /// Track an existing catalog company on this user's home. Optimistic: the row
-    /// appears immediately from the catalog entry, then the server write and a
-    /// quiet reload (to fill in the company's recruiters) run in the background.
-    func addCatalogCompany(_ company: CatalogCompany) async {
+    /// Track a company on this user's Home. Optimistic: it appears in the tracked
+    /// list immediately (reusing the full catalog row we already have), with the
+    /// server write fired in the background.
+    func track(companyID: String) {
         guard let email = userEmail else { return }
-        guard !jobs.contains(where: { $0.id == company.id }) else { return }
-        mutateTracked { if !$0.contains(company.id) { $0.append(company.id) } }
-        insertSorted(Job(id: company.id, company: company.name))
-        do {
-            try await SupabaseAPI.addTracked(userEmail: email, companyID: company.id)
-            try await reloadJobs()
-        } catch {
-            // Roll the optimistic row back if the server rejected the add.
-            mutateTracked { $0.removeAll { $0 == company.id } }
-            jobs.removeAll { $0.id == company.id }
-            report(error)
+        guard !jobs.contains(where: { $0.id == companyID }) else { return }
+        mutateTracked { if !$0.contains(companyID) { $0.append(companyID) } }
+        if let company = allCompanies.first(where: { $0.id == companyID }) {
+            insertSorted(company)
         }
+        pushTracked(add: true, companyID: companyID, email: email)
     }
 
-    /// Create a new company in the shared catalog (server), then track it on this
-    /// user's home. Both writes are server-side, so this keeps the saving overlay.
-    func addCustomCompany(name: String, sector: String? = nil) async {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, let email = userEmail else { return }
-        await perform {
-            let id = try await SupabaseAPI.addCompany(name: trimmed, sector: sector)
-            try await SupabaseAPI.addTracked(userEmail: email, companyID: id)
-            self.mutateTracked { if !$0.contains(id) { $0.append(id) } }
-        }
-        await loadCatalog()
-    }
-
-    /// Remove a company from this user's home. Instant: drops it from the list and
-    /// cache right away, with the server untrack fired in the background. The
-    /// shared catalog (and anyone else's home) is untouched.
-    func deleteJob(_ job: Job) {
+    /// Untrack a company from this user's Home. Instant + background push; the
+    /// shared catalog (and anyone else's Home) is untouched.
+    func untrack(companyID: String) {
         guard let email = userEmail else { return }
-        mutateTracked { $0.removeAll { $0 == job.id } }
-        jobs.removeAll { $0.id == job.id }
-        pushTracked(add: false, companyID: job.id, email: email)
+        mutateTracked { $0.removeAll { $0 == companyID } }
+        jobs.removeAll { $0.id == companyID }
+        pushTracked(add: false, companyID: companyID, email: email)
     }
 
-    /// Re-track a company that was just removed from Home — powers the Undo
-    /// action. Reuses the removed `Job` we still have, so it's instant too.
+    /// Track several companies at once (Companies multi-select).
+    func trackCompanies(_ ids: [String]) {
+        for id in ids { track(companyID: id) }
+    }
+
+    /// Untrack via a `Job` — powers Home's swipe-to-remove.
+    func deleteJob(_ job: Job) { untrack(companyID: job.id) }
+
+    /// Re-track a company that was just removed from Home — powers the Undo action.
     func restoreJob(_ job: Job) {
         guard let email = userEmail else { return }
         mutateTracked { if !$0.contains(job.id) { $0.append(job.id) } }
@@ -171,6 +196,35 @@ final class JobStore {
         guard !jobs.contains(where: { $0.id == job.id }) else { return }
         jobs.append(job)
         jobs.sort { $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedAscending }
+    }
+
+    // MARK: - Catalog mutations (shared, upstream — change the DB for everyone)
+
+    /// Create a new company in the shared catalog. Not auto-tracked; it appears in
+    /// the Companies list (with "Show empty" on) ready for contacts.
+    func createCompany(name: String, sector: String? = nil) async {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        await perform {
+            _ = try await SupabaseAPI.addCompany(name: trimmed, sector: sector)
+        }
+    }
+
+    /// Rename or re-sector a catalog company (upstream, for everyone).
+    func updateCompany(id: String, name: String, sector: String?) async {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        await perform {
+            try await SupabaseAPI.updateCompany(id: id, name: trimmed, sector: sector)
+        }
+    }
+
+    /// Delete a company from the shared catalog (upstream). The reload afterwards
+    /// reconciles the tracked cache against server truth, so it drops off Home too.
+    func deleteCompanyUpstream(_ id: String) async {
+        await perform {
+            try await SupabaseAPI.deleteCompany(id: id)
+        }
     }
 
     // MARK: - Cold mail mutations
@@ -203,9 +257,10 @@ final class JobStore {
 
     // MARK: - Helpers
 
-    /// Fetch this user's tracked companies and overlay their sent records.
-    private func reloadJobs() async throws {
-        guard let email = userEmail else { jobs = []; activity = []; return }
+    /// Fetch this user's tracked companies and the full catalog, overlay their
+    /// sent records, and rebuild the Activity feed.
+    private func reloadAll() async throws {
+        guard let email = userEmail else { jobs = []; allCompanies = []; activity = []; return }
 
         // One-time per account: lift any pre-sync, on-device selection up to the
         // server so it isn't lost now that the server owns Home membership.
@@ -222,19 +277,17 @@ final class JobStore {
         trackedByEmail[email] = companies.map(\.id)
         trackedFile.save(trackedByEmail)
 
+        var all = try await SupabaseAPI.fetchAllCompanies()
+
         // Sends come newest-first, so the first row per recruiter is their latest.
+        // Overlay the same per-user sent state onto both the tracked list and the
+        // full catalog.
         let sends = try await SupabaseAPI.fetchSends(userEmail: email)
         let byRecruiter = Dictionary(sends.map { ($0.recruiterID, $0) }, uniquingKeysWith: { latest, _ in latest })
-        for j in companies.indices {
-            for c in companies[j].contacts.indices {
-                guard let send = byRecruiter[companies[j].contacts[c].id] else { continue }
-                companies[j].contacts[c].isSent = true
-                companies[j].contacts[c].sentAt = send.sentAt
-                companies[j].contacts[c].sentSubject = send.subject
-                companies[j].contacts[c].sentBody = send.body
-            }
-        }
+        overlaySends(byRecruiter, into: &companies)
+        overlaySends(byRecruiter, into: &all)
         jobs = companies
+        allCompanies = all
 
         // Activity is built from the full send history (not the tracked list), so
         // removing a company from Home leaves its sent records here untouched, and
@@ -250,6 +303,19 @@ final class JobStore {
             }
     }
 
+    /// Overlay this user's per-recruiter sent state onto a set of companies.
+    private func overlaySends(_ byRecruiter: [String: MailSend], into companies: inout [Job]) {
+        for j in companies.indices {
+            for c in companies[j].contacts.indices {
+                guard let send = byRecruiter[companies[j].contacts[c].id] else { continue }
+                companies[j].contacts[c].isSent = true
+                companies[j].contacts[c].sentAt = send.sentAt
+                companies[j].contacts[c].sentSubject = send.subject
+                companies[j].contacts[c].sentBody = send.body
+            }
+        }
+    }
+
     /// Run a write, then refresh from the database so local state stays in sync.
     /// `inFlight` drives the app-wide "Saving…" state for the whole round-trip.
     private func perform(_ operation: () async throws -> Void) async {
@@ -257,7 +323,7 @@ final class JobStore {
         defer { inFlight -= 1 }
         do {
             try await operation()
-            try await reloadJobs()
+            try await reloadAll()
         } catch {
             report(error)
         }

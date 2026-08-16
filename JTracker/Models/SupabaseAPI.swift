@@ -4,15 +4,18 @@ import Foundation
 /// recruiters are a shared catalog; each user's Home selection is stored on-device
 /// (client-side), while sent records (`mail_sends`) stay server-side.
 enum SupabaseAPI {
-    // MARK: - Catalog (all companies, for the picker)
+    // MARK: - Catalog (every company, with recruiters)
 
-    static func fetchCatalog() async throws -> [CatalogCompany] {
+    /// Every company in the shared catalog, each with its recruiters and sector.
+    /// A left join, so companies with no recruiters are included too — the
+    /// Companies list decides whether to show them. Sorted by name.
+    static func fetchAllCompanies() async throws -> [Job] {
         let request = makeRequest(path: "companies", query: [
-            URLQueryItem(name: "select", value: "id,name,sector"),
+            URLQueryItem(name: "select", value: "id,name,sector,recruiters(id,name,email,position,phone)"),
             URLQueryItem(name: "order", value: "name")
         ])
         let data = try await send(request)
-        return try decoder.decode([CatalogCompany].self, from: data)
+        return try decoder.decode([Job].self, from: data)
     }
 
     // MARK: - Home selection (tracked companies, per user)
@@ -129,6 +132,24 @@ enum SupabaseAPI {
         var body: [String: Any] = ["name": name]
         if let sector, !sector.isEmpty { body["sector"] = sector }
         return try await insertReturningID(path: "companies", body: body)
+    }
+
+    /// Rename or re-sector a catalog company. Empty sector clears the column.
+    static func updateCompany(id: String, name: String, sector: String?) async throws {
+        let body: [String: Any] = [
+            "name": name,
+            "sector": (sector?.isEmpty ?? true) ? NSNull() : sector!
+        ]
+        try await write(method: "PATCH", path: "companies",
+                        query: [URLQueryItem(name: "id", value: "eq.\(id)")],
+                        body: body)
+    }
+
+    /// Delete a company from the shared catalog. The database cascades this to the
+    /// company's recruiters and every user's tracked/sent rows for it.
+    static func deleteCompany(id: String) async throws {
+        try await write(method: "DELETE", path: "companies",
+                        query: [URLQueryItem(name: "id", value: "eq.\(id)")])
     }
 
     // MARK: - Cold mail (recruiter) writes

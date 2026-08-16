@@ -16,6 +16,8 @@ extension View {
     ///   whose delete cascades (e.g. removing a company drops its cold mails too).
     /// - Parameter onSend: when provided, a "Send" button appears in the bar
     ///   alongside delete (used by lists whose items can be mailed).
+    /// - Parameter onTrack: when provided, a "Track" button appears in the bar
+    ///   alongside delete (used by the Companies list).
     /// - Parameter confirmsDelete: when false, the Delete button runs `onDelete`
     ///   immediately with no dialog — for reversible removals (e.g. untracking a
     ///   company from Home, which offers an Undo instead).
@@ -27,6 +29,7 @@ extension View {
         deleteMessage: String? = nil,
         confirmsDelete: Bool = true,
         onSend: (() -> Void)? = nil,
+        onTrack: (() -> Void)? = nil,
         onDelete: @escaping () -> Void
     ) -> some View {
         modifier(SelectionActions(
@@ -37,6 +40,7 @@ extension View {
             deleteMessage: deleteMessage,
             confirmsDelete: confirmsDelete,
             onSend: onSend,
+            onTrack: onTrack,
             onDelete: onDelete
         ))
     }
@@ -50,6 +54,7 @@ private struct SelectionActions: ViewModifier {
     let deleteMessage: String?
     let confirmsDelete: Bool
     let onSend: (() -> Void)?
+    let onTrack: (() -> Void)?
     let onDelete: () -> Void
 
     func body(content: Content) -> some View {
@@ -75,6 +80,13 @@ private struct SelectionActions: ViewModifier {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Spacer()
+            if let onTrack {
+                Button(action: onTrack) {
+                    Label("Track", systemImage: "pin.fill")
+                }
+                .buttonStyle(.bordered)
+                .disabled(count == 0)
+            }
             if let onSend {
                 Button(action: onSend) {
                     Label("Send", systemImage: "paperplane.fill")

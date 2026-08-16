@@ -60,10 +60,13 @@ struct SendMailView: View {
                 let context = MailContext.make(contact: contact, company: job.company, profile: profile)
                 return MailPreview(
                     id: contact.id,
+                    contact: contact,
+                    company: job.company,
                     name: contact.name.isEmpty ? contact.email : contact.name,
                     email: contact.email,
                     subject: context.fill(template.subject),
-                    body: context.fill(template.content)
+                    body: context.fill(template.content),
+                    templateID: template.id
                 )
             }
     }
@@ -194,44 +197,74 @@ struct SendMailView: View {
 }
 
 /// One fully rendered mail, ready to preview and send. Subject/body are mutable
-/// so each card can be tailored on the review screen before sending.
+/// so each card can be tailored on the review screen before sending. Carries the
+/// source `contact`, `company`, and the `templateID` it was rendered from so the
+/// review screen can re-render a subset when a different template is chosen.
 struct MailPreview: Identifiable {
     let id: Contact.ID
+    let contact: Contact
+    let company: String
     let name: String
     let email: String
     var subject: String
     var body: String
+    var templateID: MailTemplate.ID?
 }
 
 /// Reviews the rendered mails before sending: a single mail fills the screen, a
 /// batch shows as a horizontal deck of cards with a "Send All" button below.
-private struct MailPreviewView: View {
+/// Shared by the per-company (`SendMailView`) and cross-company
+/// (`SuggestedSendView`) send flows.
+struct MailPreviewView: View {
     @Binding var previews: [MailPreview]
     let isSending: Bool
     let sentCount: Int
     let totalCount: Int
     let onSendAll: () -> Void
 
+    @Environment(TemplateStore.self) private var templateStore
+    @Environment(ProfileStore.self) private var profileStore
+
     /// The card currently open in the edit drawer.
     @State private var editingPreview: MailPreview?
+    /// nil = show all companies. Filters which cards the review deck shows so you
+    /// can focus on (and re-template) one company at a time.
+    @State private var companyFilter: String?
+
+    /// Distinct companies in this batch, sorted. The per-company controls only
+    /// appear when a send spans more than one.
+    private var companies: [String] {
+        Array(Set(previews.map(\.company)))
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    private var showsControls: Bool { companies.count > 1 }
+
+    /// Cards matching the current company filter (all when none is set).
+    private var displayed: [MailPreview] {
+        guard let companyFilter else { return previews }
+        return previews.filter { $0.company == companyFilter }
+    }
+
+    /// The template shared by every currently-shown card, or nil when they differ.
+    private var activeTemplateID: MailTemplate.ID? {
+        let ids = Set(displayed.map(\.templateID))
+        return ids.count == 1 ? (ids.first ?? nil) : nil
+    }
+
+    private var activeTemplateName: String {
+        guard let id = activeTemplateID,
+              let template = templateStore.templates.first(where: { $0.id == id }) else { return "Mixed" }
+        return template.name
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            if previews.count == 1, let only = previews.first {
-                card(only)
-                    .padding()
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 16) {
-                        ForEach(previews) { preview in
-                            card(preview).frame(width: 300)
-                        }
-                    }
-                    .padding()
-                    .scrollTargetLayout()
-                }
-                .scrollTargetBehavior(.viewAligned)
+            if showsControls {
+                controlBar
+                Divider()
             }
+            deck
         }
         .navigationTitle(previews.count == 1 ? "Review Mail" : "Review \(previews.count) Mails")
         .navigationBarTitleDisplayMode(.inline)
@@ -240,6 +273,101 @@ private struct MailPreviewView: View {
             MailEditorView(preview: preview) { subject, body in
                 apply(id: preview.id, subject: subject, body: body)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var deck: some View {
+        if displayed.count == 1, let only = displayed.first {
+            card(only)
+                .padding()
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(displayed) { preview in
+                        card(preview).frame(width: 300)
+                    }
+                }
+                .padding()
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.viewAligned)
+        }
+    }
+
+    /// A per-company review bar: filter the deck by company (left) and set the
+    /// template for whatever's currently shown (right) — so different companies
+    /// can go out on different templates in one bulk send.
+    private var controlBar: some View {
+        HStack(spacing: 12) {
+            Menu {
+                Button {
+                    companyFilter = nil
+                } label: {
+                    if companyFilter == nil {
+                        Label("All companies", systemImage: "checkmark")
+                    } else {
+                        Text("All companies")
+                    }
+                }
+                Divider()
+                ForEach(companies, id: \.self) { company in
+                    Button {
+                        companyFilter = company
+                    } label: {
+                        if companyFilter == company {
+                            Label(company, systemImage: "checkmark")
+                        } else {
+                            Text(company)
+                        }
+                    }
+                }
+            } label: {
+                Label(companyFilter ?? "All companies", systemImage: "line.3.horizontal.decrease.circle")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Menu {
+                if templateStore.templates.isEmpty {
+                    Text("No templates")
+                } else {
+                    ForEach(templateStore.templates) { template in
+                        Button {
+                            applyTemplate(template)
+                        } label: {
+                            if activeTemplateID == template.id {
+                                Label(template.name, systemImage: "checkmark")
+                            } else {
+                                Text(template.name)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label(activeTemplateName, systemImage: "doc.plaintext")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+            }
+            .disabled(templateStore.templates.isEmpty || isSending)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+    }
+
+    /// Re-render the currently-shown cards from `template`, replacing their earlier
+    /// render (and any manual edits) for just that filtered set of companies.
+    private func applyTemplate(_ template: MailTemplate) {
+        let profile = profileStore.profile
+        let ids = Set(displayed.map(\.id))
+        for index in previews.indices where ids.contains(previews[index].id) {
+            let context = MailContext.make(contact: previews[index].contact,
+                                           company: previews[index].company, profile: profile)
+            previews[index].subject = context.fill(template.subject)
+            previews[index].body = context.fill(template.content)
+            previews[index].templateID = template.id
         }
     }
 
@@ -338,7 +466,7 @@ private struct MailPreviewView: View {
 
 /// A drawer for tailoring a single mail's subject and body before sending.
 /// Edits are local until "Save", which hands them back to the review deck.
-private struct MailEditorView: View {
+struct MailEditorView: View {
     let name: String
     let email: String
     let onSave: (_ subject: String, _ body: String) -> Void
