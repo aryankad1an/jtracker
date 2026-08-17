@@ -57,9 +57,9 @@ struct TemplateEditorView: View {
                     Button("Save") {
                         onSave(MailTemplate(
                             id: existing?.id ?? UUID(),
-                            name: name,
-                            subject: subject,
-                            content: content
+                            name: name.sanitizedLineSeparators,
+                            subject: subject.sanitizedLineSeparators,
+                            content: content.sanitizedLineSeparators
                         ))
                         dismiss()
                     }

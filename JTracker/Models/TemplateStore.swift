@@ -12,6 +12,12 @@ final class TemplateStore {
 
     private var email: String?
 
+    private var inFlight = 0
+    /// True while a write and its confirming reload are in progress. Drives the
+    /// app-wide "Saving…" overlay (see `RootView`) so a template isn't treated
+    /// as saved until it's actually round-tripped to the database.
+    var isSaving: Bool { inFlight > 0 }
+
     /// Load this user's templates from the database.
     func load(email: String) async {
         self.email = email
@@ -24,9 +30,18 @@ final class TemplateStore {
         }
     }
 
+    /// Re-fetch this user's templates from the database — pull-to-refresh, so
+    /// templates saved from another of the user's devices show up here too.
+    func refresh() async {
+        guard let email else { return }
+        await load(email: email)
+    }
+
     /// Create or update a template (both are an upsert on its id).
     func save(_ template: MailTemplate) async {
         guard let email else { return }
+        inFlight += 1
+        defer { inFlight -= 1 }
         do {
             try await SupabaseAPI.upsertTemplate(userEmail: email, template: template)
             templates = try await SupabaseAPI.fetchTemplates(userEmail: email)
@@ -37,6 +52,8 @@ final class TemplateStore {
 
     func delete(_ template: MailTemplate) async {
         guard let email else { return }
+        inFlight += 1
+        defer { inFlight -= 1 }
         do {
             try await SupabaseAPI.deleteTemplate(id: template.id)
             templates = try await SupabaseAPI.fetchTemplates(userEmail: email)

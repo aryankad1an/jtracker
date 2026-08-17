@@ -1,5 +1,12 @@
 import SwiftUI
 
+/// Identifies one request to open the compose sheet, so `.sheet(item:)` mints a
+/// fresh `SendMailView` identity per request — see `startCompose` for why.
+private struct ComposeRequest: Identifiable {
+    let id = UUID()
+    let preselect: Set<Contact.ID>?
+}
+
 /// A company's cold mails, split by a Pending / Sent filter. Sent mails are a
 /// permanent record and can't be deleted.
 struct JobDetailView: View {
@@ -7,8 +14,7 @@ struct JobDetailView: View {
     let jobID: Job.ID
 
     @State private var isAdding = false
-    @State private var isComposing = false
-    @State private var composePreselect: Set<Contact.ID>?
+    @State private var composeRequest: ComposeRequest?
     @State private var detailContact: Contact?
     @State private var isSelecting = false
     @State private var selection = Set<Contact.ID>()
@@ -110,8 +116,8 @@ struct JobDetailView: View {
                 Task { await jobStore.updateContact(updated) }
             }
         }
-        .sheet(isPresented: $isComposing) {
-            if let job { SendMailView(job: job, preselect: composePreselect) }
+        .sheet(item: $composeRequest) { request in
+            if let job { SendMailView(job: job, preselect: request.preselect) }
         }
     }
 
@@ -125,9 +131,13 @@ struct JobDetailView: View {
 
     /// Open the compose sheet. Pass `preselect` to send to specific contacts
     /// (a single row or the current selection); nil defaults to all unsent.
+    ///
+    /// Presented via `.sheet(item:)` (not `isPresented:`) so every tap gets a
+    /// fresh `ComposeRequest` identity — otherwise SwiftUI can reuse the prior
+    /// `SendMailView`'s `@State` selection when reopened in quick succession,
+    /// leaking the previous contact's selection into the new sheet.
     private func startCompose(preselect: Set<Contact.ID>? = nil) {
-        composePreselect = preselect
-        isComposing = true
+        composeRequest = ComposeRequest(preselect: preselect)
     }
 
     private func enterSelection() {

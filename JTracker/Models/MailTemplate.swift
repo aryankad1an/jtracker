@@ -29,10 +29,14 @@ struct MailContext {
     var values: [MailPlaceholder: String] = [:]
 
     /// Replace every placeholder token in `text` with its value (empty if unset).
+    ///
+    /// Also cleans up stray Unicode line separators (see `sanitizedLineSeparators`)
+    /// so templates saved before that fix — which may have baked-in ones from the
+    /// keyboard bug — render correctly too, not just newly-saved ones.
     func fill(_ text: String) -> String {
         MailPlaceholder.allCases.reduce(text) { result, placeholder in
             result.replacingOccurrences(of: placeholder.token, with: values[placeholder] ?? "")
-        }
+        }.sanitizedLineSeparators
     }
 
     /// Build a context from a recipient contact, its company, and the sender profile.

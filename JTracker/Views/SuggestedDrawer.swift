@@ -85,7 +85,15 @@ struct SuggestedDrawer: View {
                 if isSelecting { sendSelectedBar }
             }
             .sheet(item: $sendBatch) { batch in
-                SuggestedSendView(recipients: batch.recipients)
+                SuggestedSendView(recipients: batch.recipients) {
+                    // A mass send just cleared out some (or all) suggestions —
+                    // exit selection so it can't keep referencing companies
+                    // that now have zero, and close this drawer entirely
+                    // rather than leaving the user back on the selection view.
+                    sendBatch = nil
+                    exitSelection()
+                    dismiss()
+                }
             }
         }
     }

@@ -6,6 +6,10 @@ import SwiftUI
 /// `SendMailView`, but its recipients span companies rather than one.
 struct SuggestedSendView: View {
     let recipients: [(contact: Contact, company: String)]
+    /// Called instead of the local `dismiss()` once every mail sends
+    /// successfully, so the presenter can also close the selection view
+    /// behind this one rather than leaving it open on stale companies.
+    var onSent: (() -> Void)?
 
     @Environment(JobStore.self) private var jobStore
     @Environment(TemplateStore.self) private var templateStore
@@ -23,8 +27,9 @@ struct SuggestedSendView: View {
     /// A snapshot of the rendered mails the review screen can tailor per card.
     @State private var editablePreviews: [MailPreview] = []
 
-    init(recipients: [(contact: Contact, company: String)]) {
+    init(recipients: [(contact: Contact, company: String)], onSent: (() -> Void)? = nil) {
         self.recipients = recipients
+        self.onSent = onSent
         _selection = State(initialValue: Set(recipients.map(\.contact.id)))
     }
 
@@ -176,7 +181,11 @@ struct SuggestedSendView: View {
         isSending = false
 
         if failures.isEmpty {
-            dismiss()
+            if let onSent {
+                onSent()
+            } else {
+                dismiss()
+            }
         } else {
             resultMessage = "Sent \(sent.count) of \(totalCount). Failed for: \(failures.joined(separator: ", "))."
         }

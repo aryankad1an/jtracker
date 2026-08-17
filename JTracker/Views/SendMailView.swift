@@ -512,7 +512,7 @@ struct MailEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        onSave(subject, messageBody)
+                        onSave(subject.sanitizedLineSeparators, messageBody.sanitizedLineSeparators)
                         dismiss()
                     }
                     .disabled(subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

@@ -67,6 +67,9 @@ struct TemplatesView: View {
                     }
                     .listStyle(.plain)
                     .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
+                    // Templates are per-account, not per-device — pull to sync in
+                    // whatever another of the user's signed-in clients has saved.
+                    .refreshable { await store.refresh() }
                 }
             }
             .navigationTitle("Templates")

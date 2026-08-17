@@ -30,7 +30,7 @@ struct RootView: View {
         // Block interaction and show a loading state while a change is being
         // written to the database and reloaded, so the two never drift.
         .overlay {
-            if jobStore.isSaving {
+            if jobStore.isSaving || templateStore.isSaving {
                 ZStack {
                     Color.black.opacity(0.15).ignoresSafeArea()
                     ProgressView("Saving…")
@@ -41,6 +41,7 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: jobStore.isSaving)
+        .animation(.easeInOut(duration: 0.15), value: templateStore.isSaving)
         // Surface any write/load failure from any tab.
         .alert(
             "Something went wrong",
