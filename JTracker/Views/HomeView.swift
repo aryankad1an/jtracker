@@ -116,7 +116,7 @@ struct HomeView: View {
     private func scheduleUndoDismiss() {
         undoTask?.cancel()
         undoTask = Task {
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(6))
             guard !Task.isCancelled else { return }
             await MainActor.run { withAnimation { undoJobs = [] } }
         }

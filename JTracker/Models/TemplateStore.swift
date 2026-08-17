@@ -10,6 +10,8 @@ final class TemplateStore {
     private(set) var isLoading = false
     var errorMessage: String?
 
+    func clearError() { errorMessage = nil }
+
     private var email: String?
 
     private var inFlight = 0

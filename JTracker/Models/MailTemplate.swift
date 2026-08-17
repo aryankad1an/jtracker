@@ -21,6 +21,36 @@ enum MailPlaceholder: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var token: String { rawValue }
+
+    /// Chip text in the editor. The tokens themselves are too long to read on a
+    /// keyboard bar, and "Their"/"My" says which side of the mail a value comes
+    /// from far faster than "Receiver"/"Sender" does.
+    var shortLabel: String {
+        switch self {
+        case .receiverName: "Their name"
+        case .receiverPosition: "Their role"
+        case .receiverCompany: "Their company"
+        case .senderName: "My name"
+        case .senderCollege: "My college"
+        case .senderCompany: "My company"
+        case .senderPosition: "My role"
+        case .senderResume: "Resume link"
+        }
+    }
+
+    /// How a blank value is called out in the preview: "⟨their role missing⟩".
+    var blankLabel: String {
+        switch self {
+        case .receiverName: "their name"
+        case .receiverPosition: "their role"
+        case .receiverCompany: "their company"
+        case .senderName: "your name"
+        case .senderCollege: "your college"
+        case .senderCompany: "your company"
+        case .senderPosition: "your role"
+        case .senderResume: "resume link"
+        }
+    }
 }
 
 /// The concrete values used to replace placeholder tokens when composing.
@@ -42,7 +72,7 @@ struct MailContext {
     /// Build a context from a recipient contact, its company, and the sender profile.
     static func make(contact: Contact, company: String, profile: Profile) -> MailContext {
         MailContext(values: [
-            .receiverName: contact.name.split(separator: " ").first.map(String.init) ?? contact.name,
+            .receiverName: RecipientName.greeting(name: contact.name, email: contact.email),
             .receiverPosition: contact.position,
             .receiverCompany: company,
             .senderName: profile.name,

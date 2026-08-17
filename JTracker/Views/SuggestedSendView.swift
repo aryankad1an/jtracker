@@ -11,19 +11,15 @@ struct SuggestedSendView: View {
     /// behind this one rather than leaving it open on stale companies.
     var onSent: (() -> Void)?
 
-    @Environment(JobStore.self) private var jobStore
     @Environment(TemplateStore.self) private var templateStore
     @Environment(ProfileStore.self) private var profileStore
     @Environment(GmailAuthStore.self) private var gmail
+    @Environment(MailQueue.self) private var mailQueue
     @Environment(\.dismiss) private var dismiss
 
     @State private var selection: Set<Contact.ID>
     @State private var templateID: MailTemplate.ID?
-    @State private var isSending = false
-    @State private var sentCount = 0
-    @State private var totalCount = 0
     @State private var showingPreview = false
-    @State private var resultMessage: String?
     /// A snapshot of the rendered mails the review screen can tailor per card.
     @State private var editablePreviews: [MailPreview] = []
 
@@ -38,7 +34,7 @@ struct SuggestedSendView: View {
     }
 
     private var canSend: Bool {
-        gmail.isConnected && selectedTemplate != nil && !selection.isEmpty && !isSending
+        gmail.isConnected && selectedTemplate != nil && !selection.isEmpty
     }
 
     /// The fully rendered mails for the current template + selection, each filled
@@ -92,6 +88,9 @@ struct SuggestedSendView: View {
                         } label: {
                             recipientRow(item.contact, company: item.company)
                         }
+                        // Otherwise the Form tints the whole row, making every
+                        // recipient name look like a link.
+                        .buttonStyle(.plain)
                     }
                 } header: {
                     Text("Recipients (\(selection.count) selected)")
@@ -101,7 +100,7 @@ struct SuggestedSendView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.disabled(isSending)
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Next") {
@@ -111,19 +110,7 @@ struct SuggestedSendView: View {
                 }
             }
             .navigationDestination(isPresented: $showingPreview) {
-                MailPreviewView(previews: $editablePreviews, isSending: isSending,
-                                sentCount: sentCount, totalCount: totalCount) {
-                    Task { await send() }
-                }
-            }
-            .alert(
-                "Send Mail",
-                isPresented: Binding(get: { resultMessage != nil },
-                                     set: { if !$0 { resultMessage = nil; dismiss() } })
-            ) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(resultMessage ?? "")
+                MailPreviewView(previews: $editablePreviews) { enqueue() }
             }
             .onAppear {
                 if templateID == nil { templateID = templateStore.templates.first?.id }
@@ -151,43 +138,20 @@ struct SuggestedSendView: View {
         if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
     }
 
-    private func send() async {
-        let profile = profileStore.profile
-        // Send exactly what's shown on the review screen — including any per-card
-        // edits — rather than re-rendering from the template.
-        let targets = editablePreviews
-        guard !targets.isEmpty else { return }
-        totalCount = targets.count
-        sentCount = 0
-        isSending = true
-
-        var sent: [Contact.ID: SentMail] = [:]
-        var failures: [String] = []
-        for preview in targets {
-            do {
-                try await gmail.send(
-                    to: preview.email,
-                    subject: preview.subject,
-                    body: preview.body,
-                    fromName: profile.name
-                )
-                sent[preview.id] = SentMail(subject: preview.subject, body: preview.body)
-                sentCount += 1
-            } catch {
-                failures.append(preview.email)
-            }
+    /// Hand the reviewed mails to the background queue and close. Exactly what's
+    /// on the review screen goes out — including any per-card edits — rather than
+    /// being re-rendered from the template.
+    private func enqueue() {
+        let mails = editablePreviews.map {
+            MailQueue.Mail(id: $0.id, recipient: $0.email, displayName: $0.name,
+                           subject: $0.subject, body: $0.body)
         }
-        await jobStore.markContactsSent(sent)
-        isSending = false
+        guard !mails.isEmpty else { return }
+        mailQueue.enqueue(mails, fromName: profileStore.profile.name)
 
-        if failures.isEmpty {
-            if let onSent {
-                onSent()
-            } else {
-                dismiss()
-            }
-        } else {
-            resultMessage = "Sent \(sent.count) of \(totalCount). Failed for: \(failures.joined(separator: ", "))."
-        }
+        // The suggestions these came from are about to go stale, so let the
+        // presenter close the whole drawer rather than leaving it on companies
+        // whose contacts are now queued.
+        if let onSent { onSent() } else { dismiss() }
     }
 }

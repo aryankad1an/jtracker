@@ -41,8 +41,8 @@ struct ContactDetailView: View {
     var body: some View {
         NavigationStack {
             Form {
-                RecruiterFields(email: $email, name: $name, position: $position, phone: $phone)
-                    .disabled(!isEditing)
+                RecruiterFields(email: $email, name: $name, position: $position, phone: $phone,
+                                isEditing: isEditing, header: company)
 
                 Section("Sent History") {
                     if isLoadingHistory {
@@ -63,7 +63,10 @@ struct ContactDetailView: View {
                     }
                 }
             }
-            .navigationTitle(company)
+            // The screen is about a person, so it's titled with their name. It used
+            // to show the company, which is the one thing you already knew — you
+            // arrived from that company's list.
+            .navigationTitle(name.isEmpty ? email : name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -72,6 +75,7 @@ struct ContactDetailView: View {
                     } label: {
                         Image(systemName: isEditing ? "xmark" : "pencil")
                     }
+                    .accessibilityLabel(isEditing ? "Cancel editing" : "Edit recruiter")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if isEditing {

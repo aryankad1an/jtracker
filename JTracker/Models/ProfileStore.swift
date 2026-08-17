@@ -36,15 +36,21 @@ final class ProfileStore {
     }
 
     /// Save the current profile to the database.
-    func save() async {
-        guard let email else { return }
+    ///
+    /// - Returns: whether the write landed. Callers need this: leaving edit mode
+    ///   on a failed save makes a lost edit look like a successful one.
+    @discardableResult
+    func save() async -> Bool {
+        guard let email else { return false }
         isSaving = true
         defer { isSaving = false }
         do {
             try await SupabaseAPI.upsertProfile(email: email, profile: profile)
             hasProfile = true
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 

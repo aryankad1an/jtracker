@@ -20,6 +20,7 @@ struct JobDetailView: View {
     @State private var selection = Set<Contact.ID>()
     @State private var confirmingDelete = false
     @State private var pendingDelete: Contact?
+    @State private var searchText = ""
 
     /// Always read the live job from the store so edits show immediately. Looks in
     /// the full catalog first, so a company opened from the Companies tab renders
@@ -30,11 +31,26 @@ struct JobDetailView: View {
 
     /// All the company's cold mails, sorted by display name, in one list.
     private func sortedContacts(_ job: Job) -> [Contact] {
-        job.contacts.sorted {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let matching = query.isEmpty ? job.contacts : job.contacts.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.email.localizedCaseInsensitiveContains(query)
+                || $0.position.localizedCaseInsensitiveContains(query)
+        }
+        return matching.sorted {
             let a = $0.name.isEmpty ? $0.email : $0.name
             let b = $1.name.isEmpty ? $1.email : $1.name
             return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
         }
+    }
+
+    /// Sent mails are a permanent record, so only unsent ones can actually be
+    /// removed. The bar counts what's selected; the delete dialog counts what will
+    /// really go — they aren't the same number, and pretending otherwise meant
+    /// confirming "Delete 5" and watching 2 disappear.
+    private var deletableCount: Int {
+        guard let job else { return 0 }
+        return job.contacts.filter { selection.contains($0.id) && !$0.isSent }.count
     }
 
     var body: some View {
@@ -55,6 +71,7 @@ struct JobDetailView: View {
         }
         .navigationTitle(job?.company ?? "")
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, prompt: "Search recruiters")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if isSelecting {
@@ -76,6 +93,7 @@ struct JobDetailView: View {
                     } label: {
                         Image(systemName: "ellipsis")
                     }
+                    .accessibilityLabel("More actions")
                 }
             }
         }
@@ -85,6 +103,7 @@ struct JobDetailView: View {
             noun: SelectionNoun(singular: "cold mail", plural: "cold mails"),
             confirmingDelete: $confirmingDelete,
             deleteMessage: "This permanently deletes the selected recruiters from the shared database, for every user. Sent ones are kept. This can't be undone.",
+            deletableCount: deletableCount,
             onSend: {
                 let chosen = selection
                 exitSelection()
@@ -121,12 +140,26 @@ struct JobDetailView: View {
         }
     }
 
+    /// Carries its own action, like the Companies and Templates empty states —
+    /// pointing at a menu the user then has to go hunting for is a dead end.
+    @ViewBuilder
     private var emptyState: some View {
-        ContentUnavailableView(
-            "No Cold Mails",
-            systemImage: "envelope",
-            description: Text("Use the menu to add a cold mail.")
-        )
+        if searchText.isEmpty {
+            ContentUnavailableView {
+                Label("No Cold Mails", systemImage: "envelope")
+            } description: {
+                Text("Add a recruiter to start sending.")
+            } actions: {
+                Button {
+                    isAdding = true
+                } label: {
+                    Label("Add Cold Mail", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        } else {
+            ContentUnavailableView.search(text: searchText)
+        }
     }
 
     /// Open the compose sheet. Pass `preselect` to send to specific contacts
@@ -197,33 +230,36 @@ private struct ContactRow: View {
         contact.name.isEmpty ? contact.email : contact.name
     }
 
-    private var subtitle: String {
-        contact.position.isEmpty ? contact.email : contact.position
+    /// Never repeats the title. A contact with no name is already titled by its
+    /// email, and falling back to the email again printed the same string twice.
+    private var subtitle: String? {
+        if !contact.position.isEmpty { return contact.position }
+        return contact.name.isEmpty ? nil : contact.email
     }
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "envelope.fill")
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .frame(width: 32)
+            // A monogram rather than the identical envelope glyph every row used
+            // to get: these are people, and the colour makes a long recruiter list
+            // scannable — the same treatment they already get in Activity.
+            MonogramAvatar(text: title, size: Theme.Avatar.small)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
                     .lineLimit(1)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
-                if let sentAt = contact.sentAt {
-                    lastSentPill(sentAt)
-                }
+                SentPill(sentAt: contact.sentAt)
                 if let onSend {
                     Button(action: onSend) {
                         Image(systemName: "paperplane.fill")
@@ -233,24 +269,10 @@ private struct ContactRow: View {
                             .background(.tint.opacity(0.12), in: Circle())
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel(contact.isSent ? "Send again to \(title)" : "Send to \(title)")
                 }
             }
         }
         .padding(.vertical, 4)
-    }
-
-    /// A small "Last sent …" chip, shown once a mail has gone out.
-    private func lastSentPill(_ date: Date) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: "calendar")
-            Text(date.activityLabel)
-                .lineLimit(1)
-        }
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(.statusDone)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(.statusDone.opacity(0.15), in: Capsule())
-        .fixedSize(horizontal: true, vertical: false)
     }
 }

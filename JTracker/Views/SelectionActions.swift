@@ -21,6 +21,11 @@ extension View {
     /// - Parameter confirmsDelete: when false, the Delete button runs `onDelete`
     ///   immediately with no dialog — for reversible removals (e.g. untracking a
     ///   company from Home, which offers an Undo instead).
+    /// - Parameter deletableCount: how many of the selection can actually be
+    ///   deleted, when that differs from `count` (some rows are protected). Drives
+    ///   the confirmation copy so it never promises more than it will do.
+    /// - Parameter trackAction: the constructive bulk action for lists that have
+    ///   one, with its own label so it can read "Track" or "Untrack".
     func selectionActions(
         isSelecting: Bool,
         count: Int,
@@ -28,8 +33,9 @@ extension View {
         confirmingDelete: Binding<Bool>,
         deleteMessage: String? = nil,
         confirmsDelete: Bool = true,
+        deletableCount: Int? = nil,
         onSend: (() -> Void)? = nil,
-        onTrack: (() -> Void)? = nil,
+        trackAction: SelectionBulkAction? = nil,
         onDelete: @escaping () -> Void
     ) -> some View {
         modifier(SelectionActions(
@@ -39,11 +45,20 @@ extension View {
             confirmingDelete: confirmingDelete,
             deleteMessage: deleteMessage,
             confirmsDelete: confirmsDelete,
+            deletableCount: deletableCount,
             onSend: onSend,
-            onTrack: onTrack,
+            trackAction: trackAction,
             onDelete: onDelete
         ))
     }
+}
+
+/// A labelled bulk action for the selection bar, so one slot can present itself
+/// as "Track" or "Untrack" depending on what's selected.
+struct SelectionBulkAction {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
 }
 
 private struct SelectionActions: ViewModifier {
@@ -53,20 +68,29 @@ private struct SelectionActions: ViewModifier {
     @Binding var confirmingDelete: Bool
     let deleteMessage: String?
     let confirmsDelete: Bool
+    let deletableCount: Int?
     let onSend: (() -> Void)?
-    let onTrack: (() -> Void)?
+    let trackAction: SelectionBulkAction?
     let onDelete: () -> Void
+
+    /// What the delete will really remove.
+    private var effectiveDeleteCount: Int { deletableCount ?? count }
+
+    private var deleteTitle: String {
+        let deletable = effectiveDeleteCount
+        guard let deletableCount, deletableCount != count else {
+            return "Delete \(deletable) \(noun.phrase(deletable))?"
+        }
+        return "Delete \(deletableCount) of \(count) \(noun.phrase(count))?"
+    }
 
     func body(content: Content) -> some View {
         content
             .safeAreaInset(edge: .bottom) {
                 if isSelecting { bar }
             }
-            .confirmationDialog(
-                "Delete \(count) \(noun.phrase(count))?",
-                isPresented: $confirmingDelete,
-                titleVisibility: .visible
-            ) {
+            .confirmationDialog(deleteTitle, isPresented: $confirmingDelete,
+                                titleVisibility: .visible) {
                 Button("Delete", role: .destructive, action: onDelete)
             } message: {
                 Text(deleteMessage
@@ -80,28 +104,31 @@ private struct SelectionActions: ViewModifier {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Spacer()
-            if let onTrack {
-                Button(action: onTrack) {
-                    Label("Track", systemImage: "pin.fill")
+            if let trackAction {
+                Button(action: trackAction.action) {
+                    Label(trackAction.title, systemImage: trackAction.systemImage)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .disabled(count == 0)
             }
             if let onSend {
                 Button(action: onSend) {
                     Label("Send", systemImage: "paperplane.fill")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .disabled(count == 0)
             }
+            // Bordered, not prominent. Delete here is irreversible, cascades to a
+            // shared catalog, and affects every user — it should be reachable, not
+            // the brightest thing on screen inviting a tap.
             Button(role: .destructive) {
                 if confirmsDelete { confirmingDelete = true } else { onDelete() }
             } label: {
                 Label("Delete", systemImage: "trash")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .tint(.red)
-            .disabled(count == 0)
+            .disabled(count == 0 || effectiveDeleteCount == 0)
         }
         .padding(.horizontal)
         .padding(.vertical, 10)

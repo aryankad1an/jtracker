@@ -14,8 +14,8 @@ struct ProfileView: View {
         NavigationStack {
             Form {
                 // Editable only in edit mode; otherwise a read-only snapshot.
-                ProfileFields(profile: isEditing ? $draft : .constant(store.profile))
-                    .disabled(!isEditing)
+                ProfileFields(profile: isEditing ? $draft : .constant(store.profile),
+                              isEditing: isEditing)
 
                 if gmail.isConnected {
                     Section {
@@ -39,10 +39,13 @@ struct ProfileView: View {
                     } label: {
                         Image(systemName: isEditing ? "xmark" : "pencil")
                     }
+                    .accessibilityLabel(isEditing ? "Cancel editing" : "Edit profile")
                     .disabled(store.isSaving)
                 }
+                // Save sits on the trailing edge, matching every other editable
+                // screen in the app and the platform convention.
                 if isEditing {
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItem(placement: .confirmationAction) {
                         Button { save() } label: {
                             if store.isSaving { ProgressView() } else { Text("Save").fontWeight(.semibold) }
                         }
@@ -53,11 +56,19 @@ struct ProfileView: View {
         }
     }
 
+    /// Only leave edit mode once the write actually lands. A failed save used to
+    /// exit anyway, leaving the screen showing the edited values it had already
+    /// written locally — so a lost edit looked identical to a saved one until the
+    /// next load quietly restored the old profile.
     private func save() {
-        store.profile = draft
         Task {
-            await store.save()
-            isEditing = false
+            let previous = store.profile
+            store.profile = draft
+            if await store.save() {
+                isEditing = false
+            } else {
+                store.profile = previous
+            }
         }
     }
 

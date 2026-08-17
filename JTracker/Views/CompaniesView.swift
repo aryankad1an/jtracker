@@ -69,7 +69,7 @@ struct CompaniesView: View {
                 noun: SelectionNoun(singular: "company", plural: "companies"),
                 confirmingDelete: $confirmingDelete,
                 deleteMessage: "This permanently deletes the selected companies — and their contacts — from the shared database, for every user. This can't be undone.",
-                onTrack: { trackSelected() }
+                trackAction: trackAction
             ) { deleteSelected() }
             .confirmationDialog(
                 "Delete \(pendingDelete?.company ?? "company")?",
@@ -119,6 +119,7 @@ struct CompaniesView: View {
         } label: {
             Image(systemName: "ellipsis")
         }
+        .accessibilityLabel("More actions")
     }
 
     @ViewBuilder
@@ -176,9 +177,23 @@ struct CompaniesView: View {
         selection = []
     }
 
-    private func trackSelected() {
-        jobStore.trackCompanies(Array(selection))
-        exitSelection()
+    /// One slot that flips meaning: once everything selected is already tracked,
+    /// "Track" is a no-op, so the button becomes the useful inverse instead of
+    /// leaving tracked companies with no bulk action at all.
+    private var trackAction: SelectionBulkAction {
+        let selected = jobStore.allCompanies.filter { selection.contains($0.id) }
+        let allTracked = !selected.isEmpty && selected.allSatisfy { jobStore.isTracked($0.id) }
+        return SelectionBulkAction(
+            title: allTracked ? "Untrack" : "Track",
+            systemImage: allTracked ? "pin.slash.fill" : "pin.fill"
+        ) {
+            if allTracked {
+                for company in selected { jobStore.untrack(companyID: company.id) }
+            } else {
+                jobStore.trackCompanies(Array(selection))
+            }
+            exitSelection()
+        }
     }
 
     private func deleteSelected() {

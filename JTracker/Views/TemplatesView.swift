@@ -9,6 +9,20 @@ struct TemplatesView: View {
     @State private var isSelecting = false
     @State private var selection = Set<MailTemplate.ID>()
     @State private var confirmingDelete = false
+    @State private var searchText = ""
+
+    /// Templates matching the search, by name, subject, or body — the body counts
+    /// because "the one that mentions the referral" is how you actually remember
+    /// a template you wrote weeks ago.
+    private var filtered: [MailTemplate] {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return store.templates }
+        return store.templates.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.subject.localizedCaseInsensitiveContains(query)
+                || $0.content.localizedCaseInsensitiveContains(query)
+        }
+    }
 
     @ViewBuilder
     private func templateRows(_ templates: [MailTemplate]) -> some View {
@@ -61,9 +75,12 @@ struct TemplatesView: View {
                     } else {
                         emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
+                } else if filtered.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List(selection: $selection) {
-                        Section { templateRows(store.templates) }
+                        Section { templateRows(filtered) }
                     }
                     .listStyle(.plain)
                     .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
@@ -74,6 +91,7 @@ struct TemplatesView: View {
             }
             .navigationTitle("Templates")
             .navigationBarTitleDisplayMode(.large)
+            .searchable(text: $searchText, prompt: "Search templates")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     if isSelecting {
@@ -95,6 +113,7 @@ struct TemplatesView: View {
                         } label: {
                             Image(systemName: "ellipsis")
                         }
+                        .accessibilityLabel("More actions")
                     }
                 }
             }

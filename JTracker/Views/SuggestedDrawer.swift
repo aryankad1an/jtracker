@@ -69,7 +69,7 @@ struct SuggestedDrawer: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Done") { dismiss() }
                 }
                 if !groups.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -139,6 +139,7 @@ struct SuggestedDrawer: View {
         } label: {
             Image(systemName: "ellipsis.circle")
         }
+        .accessibilityLabel("Filter and send")
     }
 
     private func enterSelection() {
@@ -244,10 +245,9 @@ struct SuggestedContactRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "envelope.fill")
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .frame(width: 32)
+            // People get monograms here too, so a screen that is entirely a list
+            // of individuals isn't a column of identical envelopes.
+            MonogramAvatar(text: title, size: Theme.Avatar.small)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -261,24 +261,7 @@ struct SuggestedContactRow: View {
 
             Spacer(minLength: 8)
 
-            if let sentAt = contact.sentAt {
-                chip("Sent \(sentAt.activityLabel)", system: "clock.arrow.circlepath", color: .secondary)
-            } else {
-                chip("New", system: "sparkle", color: .accentColor)
-            }
+            SentPill(sentAt: contact.sentAt, unsentLabel: "New")
         }
-    }
-
-    private func chip(_ text: String, system: String, color: Color) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: system)
-            Text(text)
-        }
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(color)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(color.opacity(0.14), in: Capsule())
-        .fixedSize(horizontal: true, vertical: false)
     }
 }

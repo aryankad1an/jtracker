@@ -245,13 +245,23 @@ final class JobStore {
 
     /// Append a send to this user's history for each recruiter. Does nothing
     /// when no Gmail is connected — you can't send without it.
+    ///
+    /// Deliberately not routed through `perform`: this is called by `MailQueue`
+    /// when a background run finishes, which can be minutes after the user left
+    /// the send screen. Raising the app-wide "Saving…" block there would freeze
+    /// whatever they'd moved on to, for a write they didn't ask for and aren't
+    /// waiting on — the exact thing sending in the background is meant to avoid.
+    /// The reload still happens, so the UI catches up; it just does it quietly.
     func markContactsSent(_ records: [Contact.ID: SentMail]) async {
         guard !records.isEmpty, let email = userEmail else { return }
-        await perform {
+        do {
             let now = Date()
             for (id, mail) in records {
                 try await SupabaseAPI.recordSend(userEmail: email, recruiterID: id, mail: mail, at: now)
             }
+            try await reloadAll()
+        } catch {
+            report(error)
         }
     }
 
