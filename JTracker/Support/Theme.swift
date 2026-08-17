@@ -16,6 +16,27 @@ extension ShapeStyle where Self == Color {
     static var statusDone: Color { .green }
 }
 
+extension Color {
+    /// A stable accent color derived from `text`, so the same name always gets the
+    /// same color everywhere it appears — an avatar, a filter chip, the tint of a
+    /// timeline card — and those readings agree with each other.
+    ///
+    /// The bucket comes from a djb2 hash rather than a sum of code points: summing
+    /// barely mixes the low bits, so real names (similar lengths, overlapping
+    /// letters) collided in visible clumps — a list would show the same color three
+    /// rows running. Swift's own `hashValue` isn't an option, since it's seeded per
+    /// process and would repaint every avatar on each launch.
+    static func monogram(for text: String) -> Color {
+        let palette: [Color] = [.blue, .purple, .pink, .orange, .green,
+                                .teal, .indigo, .red, .brown]
+        var hash: UInt64 = 5381
+        for byte in text.utf8 {
+            hash = (hash &* 33) ^ UInt64(byte)
+        }
+        return palette[Int(hash % UInt64(palette.count))]
+    }
+}
+
 extension String {
     /// Swap stray Unicode line/paragraph separators (U+2028, U+2029, U+0085) for
     /// a plain space.

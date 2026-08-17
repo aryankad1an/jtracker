@@ -13,11 +13,7 @@ struct MonogramAvatar: View {
         String(text.first ?? "?").uppercased()
     }
 
-    private var accent: Color {
-        let palette: [Color] = [.blue, .purple, .pink, .orange, .green, .teal, .indigo, .red]
-        let sum = text.unicodeScalars.reduce(0) { $0 + Int($1.value) }
-        return palette[sum % palette.count]
-    }
+    private var accent: Color { .monogram(for: text) }
 
     var body: some View {
         Group {
