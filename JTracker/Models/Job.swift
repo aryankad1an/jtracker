@@ -9,6 +9,11 @@ struct Contact: Identifiable, Decodable {
     var name = ""
     var phone: String?
     var position = ""
+    /// False when the address bounces or the person has left the company. Part of
+    /// the shared recruiter row, not per-user: a dead address is dead for everyone.
+    /// Invalid contacts are never suggested and can't be mailed — see
+    /// `JobStore.setValidity`.
+    var isValid = true
     // Sent state is per-user (from `mail_sends`), overlaid after decoding —
     // never part of the shared recruiter row.
     var isSent = false
@@ -18,16 +23,18 @@ struct Contact: Identifiable, Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id, email, name, phone, position
+        case isValid = "is_valid"
     }
 
     init(id: String = "", email: String = "", name: String = "", phone: String? = nil,
-         position: String = "", isSent: Bool = false, sentAt: Date? = nil,
+         position: String = "", isValid: Bool = true, isSent: Bool = false, sentAt: Date? = nil,
          sentSubject: String? = nil, sentBody: String? = nil) {
         self.id = id
         self.email = email
         self.name = name
         self.phone = phone
         self.position = position
+        self.isValid = isValid
         self.isSent = isSent
         self.sentAt = sentAt
         self.sentSubject = sentSubject
@@ -42,6 +49,8 @@ struct Contact: Identifiable, Decodable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         phone = try c.decodeIfPresent(String.self, forKey: .phone)
         position = try c.decodeIfPresent(String.self, forKey: .position) ?? ""
+        // Rows written before the column existed come back null — those are valid.
+        isValid = try c.decodeIfPresent(Bool.self, forKey: .isValid) ?? true
     }
 }
 
@@ -93,4 +102,9 @@ struct Job: Identifiable, Decodable {
         sector = try c.decodeIfPresent(String.self, forKey: .sector)
         contacts = try c.decodeIfPresent([Contact].self, forKey: .contacts) ?? []
     }
+
+    /// The cold mails still worth sending, and the ones marked invalid. The company
+    /// screen shows them as two groups and only ever mails the first.
+    var validContacts: [Contact] { contacts.filter(\.isValid) }
+    var invalidContacts: [Contact] { contacts.filter { !$0.isValid } }
 }

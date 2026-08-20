@@ -20,6 +20,10 @@ Google (Gmail) OAuth for sending mail.
   automatically.
 - **Activity feed** — a per-send history that stays visible even after a company
   drops off the Home list.
+- **Invalid contacts** — mark a contact invalid when the address bounces or the
+  person has left. They drop to their own group at the bottom of the company
+  page, are never suggested, and can no longer be mailed — reversibly, and for
+  every user, since a dead address is dead for everyone.
 
 ## Architecture
 
@@ -34,6 +38,12 @@ Google (Gmail) OAuth for sending mail.
 Data is stored server-side in Supabase tables (`companies`, `recruiters`,
 `mail_sends`, profiles, templates). The shared recruiter rows are read by all
 users; per-user send state is overlaid from `mail_sends` after decoding.
+
+The valid/invalid flag is the shared `recruiters.is_valid` column, not per-user
+state — ruling a contact out is a fact about the address, so it applies to
+everyone. It's written only by the dedicated `setRecruiterValidity` call, never
+as part of an ordinary field edit, so correcting a bad address can't silently
+put the contact back in circulation.
 
 ## Requirements
 
@@ -50,7 +60,20 @@ users; per-user send state is overlaid from `mail_sends` after decoding.
    - `supabaseURL` and `supabaseAnonKey` (anon public key — protected by RLS)
    - `googleClientID` and `googleRedirectScheme` (from your Google Cloud OAuth
      iOS client; the redirect scheme is the reversed client ID)
-3. Select an iOS Simulator or device and run (`⌘R`).
+3. Apply any pending schema changes to your Supabase project (see
+   [Database schema](#database-schema)).
+4. Select an iOS Simulator or device and run (`⌘R`).
+
+## Database schema
+
+Schema changes the app expects, newest first. Run them in the Supabase SQL
+editor; each is safe to re-run.
+
+```sql
+-- Contacts that bounce, or whose owner has left the company.
+alter table recruiters
+  add column if not exists is_valid boolean not null default true;
+```
 
 > **Note:** The Supabase anon key and the Google iOS client ID are not secrets —
 > iOS clients ship them and rely on Row Level Security and PKCE. Do not, however,

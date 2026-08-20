@@ -96,14 +96,14 @@ final class JobStore {
         jobs.contains { $0.id == id }
     }
 
-    /// Contacts across every company that can be cold-mailed (valid email) and
-    /// haven't been mailed in the last month — never-sent first, then oldest sent.
-    /// Powers Home's "Suggested" section.
+    /// Contacts across every company that can be cold-mailed (well-formed address,
+    /// not marked invalid) and haven't been mailed in the last month — never-sent
+    /// first, then oldest sent. Powers Home's "Suggested" section.
     var suggestedContacts: [(company: Job, contact: Contact)] {
         let cutoff = Date().addingTimeInterval(-30 * 24 * 60 * 60)
         var result: [(company: Job, contact: Contact)] = []
         for company in allCompanies {
-            for contact in company.contacts where contact.email.contains("@") {
+            for contact in company.contacts where contact.isValid && contact.email.contains("@") {
                 if !contact.isSent || (contact.sentAt ?? .distantPast) < cutoff {
                     result.append((company, contact))
                 }
@@ -235,6 +235,16 @@ final class JobStore {
 
     func updateContact(_ contact: Contact) async {
         await perform { try await SupabaseAPI.updateRecruiter(contact) }
+    }
+
+    /// Mark cold mails valid or invalid in the shared catalog (upstream, for every
+    /// user — a bounced address is bounced for everyone). Invalid ones drop out of
+    /// Suggested and can no longer be mailed, but they're kept, with their send
+    /// history, so the company screen can still show who was ruled out and why.
+    /// Fully reversible, which is why it's offered instead of deleting.
+    func setValidity(_ ids: [Contact.ID], isValid: Bool) async {
+        guard !ids.isEmpty else { return }
+        await perform { try await SupabaseAPI.setRecruiterValidity(ids: ids, isValid: isValid) }
     }
 
     /// Delete a cold mail. Sent mails are kept as a record and can't be removed.

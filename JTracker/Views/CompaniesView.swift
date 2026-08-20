@@ -69,7 +69,7 @@ struct CompaniesView: View {
                 noun: SelectionNoun(singular: "company", plural: "companies"),
                 confirmingDelete: $confirmingDelete,
                 deleteMessage: "This permanently deletes the selected companies — and their contacts — from the shared database, for every user. This can't be undone.",
-                trackAction: trackAction
+                bulkAction: trackAction
             ) { deleteSelected() }
             .confirmationDialog(
                 "Delete \(pendingDelete?.company ?? "company")?",

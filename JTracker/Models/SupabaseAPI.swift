@@ -11,7 +11,7 @@ enum SupabaseAPI {
     /// Companies list decides whether to show them. Sorted by name.
     static func fetchAllCompanies() async throws -> [Job] {
         let request = makeRequest(path: "companies", query: [
-            URLQueryItem(name: "select", value: "id,name,sector,recruiters(id,name,email,position,phone)"),
+            URLQueryItem(name: "select", value: "id,name,sector,recruiters(id,name,email,position,phone,is_valid)"),
             URLQueryItem(name: "order", value: "name")
         ])
         let data = try await send(request)
@@ -26,7 +26,7 @@ enum SupabaseAPI {
     /// a single round trip. Sorted by name here since the join order isn't stable.
     static func fetchTrackedCompanies(userEmail: String) async throws -> [Job] {
         let request = makeRequest(path: "tracked_companies", query: [
-            URLQueryItem(name: "select", value: "companies(id,name,recruiters(id,name,email,position,phone))"),
+            URLQueryItem(name: "select", value: "companies(id,name,recruiters(id,name,email,position,phone,is_valid))"),
             URLQueryItem(name: "user_email", value: "eq.\(userEmail)")
         ])
         let data = try await send(request)
@@ -168,6 +168,17 @@ enum SupabaseAPI {
         try await write(method: "PATCH", path: "recruiters",
                         query: [URLQueryItem(name: "id", value: "eq.\(contact.id)")],
                         body: recruiterBody(contact))
+    }
+
+    /// Flag recruiters valid or invalid in the shared catalog — the whole set in
+    /// one request. Deliberately separate from `updateRecruiter` (and absent from
+    /// `recruiterBody`) so an ordinary field edit can never silently flip validity
+    /// back, e.g. when someone corrects a bad address before re-validating it.
+    static func setRecruiterValidity(ids: [String], isValid: Bool) async throws {
+        guard !ids.isEmpty else { return }
+        try await write(method: "PATCH", path: "recruiters",
+                        query: [URLQueryItem(name: "id", value: "in.(\(ids.joined(separator: ",")))")],
+                        body: ["is_valid": isValid])
     }
 
     static func deleteRecruiter(id: String) async throws {

@@ -7,8 +7,10 @@ private struct ComposeRequest: Identifiable {
     let preselect: Set<Contact.ID>?
 }
 
-/// A company's cold mails, split by a Pending / Sent filter. Sent mails are a
-/// permanent record and can't be deleted.
+/// A company's cold mails. Contacts that have been ruled out — a bounced address,
+/// or someone who has left the company — are marked invalid and sink into their
+/// own group at the bottom of the list, where they can't be mailed and are never
+/// suggested. Sent mails are a permanent record and can't be deleted.
 struct JobDetailView: View {
     @Environment(JobStore.self) private var jobStore
     let jobID: Job.ID
@@ -53,15 +55,49 @@ struct JobDetailView: View {
         return job.contacts.filter { selection.contains($0.id) && !$0.isSent }.count
     }
 
+    /// The selected contacts that can actually be mailed, so a selection of only
+    /// invalid ones disables Send instead of opening an empty compose sheet.
+    private var sendableCount: Int {
+        guard let job else { return 0 }
+        return job.contacts.filter {
+            selection.contains($0.id) && $0.isValid && $0.email.contains("@")
+        }.count
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if let job {
                 let contacts = sortedContacts(job)
+                let active = contacts.filter(\.isValid)
+                let invalid = contacts.filter { !$0.isValid }
                 if contacts.isEmpty {
                     emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List(selection: $selection) {
-                        contactRows(contacts, job: job)
+                        Section { contactRows(active) }
+                        // Ruled-out contacts keep their place in the company —
+                        // they're the record of who has already been tried — but
+                        // they sit below everything live, behind a header that
+                        // says why, so the working list above stays clean.
+                        if !invalid.isEmpty {
+                            Section {
+                                contactRows(invalid)
+                            } header: {
+                                Label("Invalid · \(invalid.count)",
+                                      systemImage: "exclamationmark.triangle.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.statusInvalid)
+                                    .textCase(nil)
+                            } footer: {
+                                // Footnote, not body: this is a caption explaining
+                                // the group, and at body size it shouted louder
+                                // than the contacts it was describing.
+                                Text("Wrong address, or the person has left. These are never suggested and can't be mailed. Swipe right to put one back.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.top, 4)
+                            }
+                        }
                     }
                     .listStyle(.plain)
                     .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
@@ -104,11 +140,13 @@ struct JobDetailView: View {
             confirmingDelete: $confirmingDelete,
             deleteMessage: "This permanently deletes the selected recruiters from the shared database, for every user. Sent ones are kept. This can't be undone.",
             deletableCount: deletableCount,
+            sendableCount: sendableCount,
             onSend: {
                 let chosen = selection
                 exitSelection()
                 startCompose(preselect: chosen)
-            }
+            },
+            bulkAction: validityAction
         ) { deleteSelected() }
         .confirmationDialog(
             "Delete \(pendingDelete.map { $0.name.isEmpty ? $0.email : $0.name } ?? "recruiter")?",
@@ -131,7 +169,13 @@ struct JobDetailView: View {
             }
         }
         .sheet(item: $detailContact) { contact in
-            ContactDetailView(contact: contact, company: job?.company ?? "") { updated in
+            ContactDetailView(
+                contact: contact,
+                company: job?.company ?? "",
+                onSetValidity: { isValid in
+                    Task { await jobStore.setValidity([contact.id], isValid: isValid) }
+                }
+            ) { updated in
                 Task { await jobStore.updateContact(updated) }
             }
         }
@@ -183,6 +227,26 @@ struct JobDetailView: View {
         selection = []
     }
 
+    /// One slot that flips meaning, like Companies' Track/Untrack: once everything
+    /// selected is already invalid the only useful bulk action is putting it back,
+    /// so the button becomes "Mark Valid" rather than sitting there as a no-op.
+    private var validityAction: SelectionBulkAction? {
+        guard let job else { return nil }
+        let selected = job.contacts.filter { selection.contains($0.id) }
+        let allInvalid = !selected.isEmpty && selected.allSatisfy { !$0.isValid }
+        return SelectionBulkAction(
+            title: allInvalid ? "Mark Valid" : "Mark Invalid",
+            systemImage: allInvalid ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+            tint: allInvalid ? Color.statusDone : Color.statusInvalid
+        ) {
+            // Only flip the ones that need it, so re-marking a mixed selection
+            // doesn't rewrite rows that were already where they belong.
+            let ids = selected.filter { $0.isValid == allInvalid }.map(\.id)
+            exitSelection()
+            Task { await jobStore.setValidity(ids, isValid: allInvalid) }
+        }
+    }
+
     private func deleteSelected() {
         guard let job else { return }
         // Sent mails are a permanent record — never delete them.
@@ -196,12 +260,14 @@ struct JobDetailView: View {
     }
 
     @ViewBuilder
-    private func contactRows(_ contacts: [Contact], job: Job) -> some View {
+    private func contactRows(_ contacts: [Contact]) -> some View {
         ForEach(contacts) { contact in
             if isSelecting {
                 ContactRow(contact: contact)
             } else {
-                ContactRow(contact: contact, onSend: contact.email.contains("@")
+                // Invalid contacts lose the send button outright — the surest way
+                // to say "not this one" is for the control not to be there.
+                ContactRow(contact: contact, onSend: contact.isValid && contact.email.contains("@")
                            ? { startCompose(preselect: [contact.id]) } : nil)
                     .contentShape(Rectangle())
                     .onTapGesture { detailContact = contact }
@@ -215,13 +281,33 @@ struct JobDetailView: View {
                             }
                         }
                     }
+                    // Leading edge, opposite delete: this is the reversible,
+                    // non-destructive way to take a contact out of rotation, and
+                    // the same swipe brings it back.
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            Task { await jobStore.setValidity([contact.id], isValid: !contact.isValid) }
+                        } label: {
+                            Label(contact.isValid ? "Invalid" : "Valid",
+                                  systemImage: contact.isValid
+                                      ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        }
+                        .tint(contact.isValid ? Color.statusInvalid : Color.statusDone)
+                    }
             }
         }
     }
 }
 
-/// A single cold-mail row: icon, recruiter name, position, a "last sent" pill,
-/// and a send button for sending (or re-sending).
+/// A single cold-mail row: icon, recruiter name, position, a status pill, and a
+/// send button for sending (or re-sending).
+///
+/// A contact marked invalid keeps the same layout — it's still the same person,
+/// and a different-shaped row would read as a different kind of thing — but every
+/// signal is turned down: the monogram loses its colour, the text drops to
+/// secondary, and the send button is gone, replaced by an "Invalid" chip that
+/// says which of the two groups you're looking at even mid-scroll, when the
+/// section header is off screen.
 private struct ContactRow: View {
     let contact: Contact
     var onSend: (() -> Void)? = nil
@@ -243,15 +329,18 @@ private struct ContactRow: View {
             // to get: these are people, and the colour makes a long recruiter list
             // scannable — the same treatment they already get in Activity.
             MonogramAvatar(text: title, size: Theme.Avatar.small)
+                .grayscale(contact.isValid ? 0 : 1)
+                .opacity(contact.isValid ? 1 : 0.5)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
+                    .foregroundStyle(contact.isValid ? .primary : .secondary)
                     .lineLimit(1)
                 if let subtitle {
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(contact.isValid ? .secondary : .tertiary)
                         .lineLimit(1)
                 }
             }
@@ -259,7 +348,14 @@ private struct ContactRow: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
-                SentPill(sentAt: contact.sentAt)
+                // One chip, not two: for a ruled-out contact "Invalid" is the fact
+                // that matters, and stacking it next to "Sent 3 weeks ago" only
+                // crowds the row with the less useful half.
+                if contact.isValid {
+                    SentPill(sentAt: contact.sentAt)
+                } else {
+                    InvalidPill()
+                }
                 if let onSend {
                     Button(action: onSend) {
                         Image(systemName: "paperplane.fill")

@@ -14,6 +14,10 @@ enum Theme {
 extension ShapeStyle where Self == Color {
     /// Positive / completed states: sent, applied, Gmail connected.
     static var statusDone: Color { .green }
+
+    /// Set-aside states: a contact marked invalid. Deliberately not red — nothing
+    /// has been destroyed, and red is reserved for delete.
+    static var statusInvalid: Color { .orange }
 }
 
 extension Color {

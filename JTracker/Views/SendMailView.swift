@@ -23,7 +23,7 @@ struct SendMailView: View {
     ///   not yet sent is preselected so a bulk send is one tap.
     init(job: Job, preselect: Set<Contact.ID>? = nil) {
         self.job = job
-        let sendable = job.contacts.filter { $0.email.contains("@") }
+        let sendable = job.contacts.filter { $0.isValid && $0.email.contains("@") }
         let sendableIDs = Set(sendable.map(\.id))
         if let preselect {
             _selection = State(initialValue: preselect.intersection(sendableIDs))
@@ -32,9 +32,11 @@ struct SendMailView: View {
         }
     }
 
-    /// Contacts with a usable email — the ones we can send to.
+    /// Contacts with a usable email that haven't been marked invalid — the ones we
+    /// can send to. Invalid ones aren't listed at all: they're not a choice to be
+    /// re-made on every send, which is the whole point of ruling them out once.
     private var recipients: [Contact] {
-        job.contacts.filter { $0.email.contains("@") }
+        job.contacts.filter { $0.isValid && $0.email.contains("@") }
     }
 
     private var selectedTemplate: MailTemplate? {
