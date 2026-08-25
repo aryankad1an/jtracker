@@ -61,16 +61,16 @@ struct SuggestedSendView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            PaperForm {
                 if !gmail.isConnected {
                     Label("Connect Gmail in Profile to send mail.",
                           systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.kraft)
                 }
 
                 Section("Template") {
                     if templateStore.templates.isEmpty {
-                        Text("Create a template first.").foregroundStyle(.secondary)
+                        Text("Create a template first.").foregroundStyle(.inkMuted)
                     } else {
                         Picker("Template", selection: $templateID) {
                             Text("Choose…").tag(MailTemplate.ID?.none)
@@ -104,6 +104,7 @@ struct SuggestedSendView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Next") {
+                        Haptics.press()
                         editablePreviews = previews
                         showingPreview = true
                     }.disabled(!canSend)
@@ -115,6 +116,7 @@ struct SuggestedSendView: View {
             .onAppear {
                 if templateID == nil { templateID = templateStore.templates.first?.id }
             }
+            .sensoryFeedback(.selection, trigger: templateID)
         }
     }
 
@@ -122,19 +124,24 @@ struct SuggestedSendView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.name.isEmpty ? contact.email : contact.name)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.ink)
                 Text("\(company) · \(contact.email)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.inkMuted)
                     .lineLimit(1)
             }
             Spacer()
-            Image(systemName: selection.contains(contact.id) ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(selection.contains(contact.id) ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            let isOn = selection.contains(contact.id)
+            Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .symbolEffect(.bounce, value: isOn)
+                .scaleEffect(isOn ? 1.1 : 1)
+                .animation(Theme.Motion.pop, value: isOn)
         }
     }
 
     private func toggle(_ id: Contact.ID) {
+        Haptics.select()
         if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
     }
 
@@ -147,6 +154,9 @@ struct SuggestedSendView: View {
                            subject: $0.subject, body: $0.body)
         }
         guard !mails.isEmpty else { return }
+        // The same rising run the per-company send plays — this is the same act,
+        // just spread across companies.
+        Haptics.cascade(mails.count)
         mailQueue.enqueue(mails, fromName: profileStore.profile.name)
 
         // The suggestions these came from are about to go stale, so let the

@@ -12,19 +12,27 @@ struct LoginView: View {
             Image(systemName: "paperplane.circle.fill")
                 .font(.system(size: 72))
                 .foregroundStyle(.tint)
+                // The one piece of idle motion in the app, and only here: the
+                // sign-in screen has nothing else on it, and a mark that breathes
+                // says the app is running before anything has been tapped.
+                .symbolEffect(.bounce.up.byLayer, options: .repeat(.periodic(delay: 2.4)))
+                .scaleEffect(gmail.isConnecting ? 0.92 : 1)
+                .animation(Theme.Motion.bouncy, value: gmail.isConnecting)
 
             VStack(spacing: 8) {
                 Text("JTracker")
-                    .font(.largeTitle.bold())
+                    .font(.display(38, weight: .bold))
+                    .foregroundStyle(.ink)
                 Text("Track and send cold mails from your Gmail.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.inkMuted)
                     .multilineTextAlignment(.center)
             }
 
             Spacer()
 
             Button {
+                Haptics.press()
                 Task { await gmail.connect() }
             } label: {
                 HStack(spacing: 8) {
@@ -44,9 +52,19 @@ struct LoginView: View {
 
             Text("You need to sign in to continue.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.inkMuted)
         }
         .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.paper)
+        // Connecting hands off to a Google sheet and comes back minutes later in
+        // the worst case, so the outcome is announced rather than only shown.
+        .sensoryFeedback(trigger: gmail.errorMessage != nil) { _, failed in
+            failed ? .error : nil
+        }
+        .sensoryFeedback(trigger: gmail.isConnected) { _, connected in
+            connected ? .success : nil
+        }
         .alert(
             "Couldn't connect Gmail",
             isPresented: Binding(get: { gmail.errorMessage != nil },

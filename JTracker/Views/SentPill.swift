@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The small status capsule contacts wear in lists — "Sent 3 days ago",
+/// The small status chip contacts wear in lists — "Sent 3 days ago",
 /// "Invalid", "New". One shape, one type size, one padding, so a row that shows
 /// two of them side by side still reads as one row rather than two competing
 /// badges.
@@ -16,16 +16,26 @@ struct StatusChip: View {
         }
         .font(.caption2.weight(.medium))
         .foregroundStyle(color)
-        .padding(.horizontal, 7)
+        .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(color.opacity(0.15), in: Capsule())
+        .background(color.opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
         // Intrinsic width so the chip can never be squeezed — the name beside it
         // truncates instead.
         .fixedSize(horizontal: true, vertical: false)
+        // A chip is almost always *replacing* another one — Sent becoming
+        // Replied, anything becoming Invalid. Springing in from the trailing edge
+        // it shares with the chip it replaced makes that read as a swap rather
+        // than as two unrelated fades.
+        .transition(.scale(scale: 0.7, anchor: .trailing).combined(with: .opacity))
     }
 }
 
 /// The "already mailed" chip, shared by every list that shows contacts.
+///
+/// Deliberately grey, not green: green is reserved for a reply. When both chips
+/// were green, a row that had merely been sent looked exactly as good as one that
+/// had been answered.
 ///
 /// Three screens had grown their own copy of this — the company detail list, the
 /// Suggested drawer, and (missing entirely) the compose recipient list — which is
@@ -39,11 +49,24 @@ struct SentPill: View {
 
     var body: some View {
         if let sentAt {
-            StatusChip(text: "Sent \(sentAt.activityLabel)",
-                       systemImage: "clock.arrow.circlepath", color: .statusDone)
+            // The glyph already says "sent"; repeating it in words cost enough
+            // width to truncate the recipient's name beside it.
+            StatusChip(text: sentAt.activityLabel,
+                       systemImage: "clock.arrow.circlepath", color: .inkMuted)
         } else if let unsentLabel {
             StatusChip(text: unsentLabel, systemImage: "sparkle", color: .accentColor)
         }
+    }
+}
+
+/// The "they wrote back" chip. Outranks the sent chip in a row: once someone has
+/// replied, when the mail went out stops being the useful fact.
+struct RepliedPill: View {
+    let at: Date?
+
+    var body: some View {
+        StatusChip(text: at?.activityLabel ?? "Replied",
+                   systemImage: "arrowshape.turn.up.left.fill", color: .statusDone)
     }
 }
 

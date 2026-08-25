@@ -17,6 +17,12 @@ import UIKit
 ///
 /// The queue holds no references to the auth or data stores; `sender` and
 /// `onCompletion` are supplied by `RootView`, which owns both.
+enum MailQueueError: LocalizedError {
+    case noTransport
+
+    var errorDescription: String? { "No mail account is connected." }
+}
+
 @Observable
 @MainActor
 final class MailQueue {
@@ -36,6 +42,14 @@ final class MailQueue {
         let failed: [String]
     }
 
+    /// What the transport reports back about a delivered mail. The thread id is
+    /// how a reply is recognised later, so it's carried from the send all the way
+    /// into the stored record rather than looked up afterwards.
+    struct Delivery {
+        let messageID: String
+        let threadID: String
+    }
+
     /// Gap between sends. Fast enough to clear a large batch in a couple of
     /// minutes, slow enough not to look automated: Gmail's API allows roughly two
     /// sends a second, but the limit that matters is the spam heuristic, not the
@@ -53,8 +67,9 @@ final class MailQueue {
     /// Set when a run finishes so the UI can report it. Cleared by `acknowledge()`.
     private(set) var outcome: Outcome?
 
-    /// Delivers one mail. Injected so the queue stays independent of Gmail auth.
-    var sender: ((Mail, String) async throws -> Void)?
+    /// Delivers one mail and reports what the provider called it. Injected so the
+    /// queue stays independent of Gmail auth.
+    var sender: ((Mail, String) async throws -> Delivery?)?
     /// Called once per run with everything that got through, so the store can
     /// record the sends in a single write rather than one per mail.
     var onCompletion: (([Contact.ID: SentMail]) async -> Void)?
@@ -130,8 +145,14 @@ final class MailQueue {
         while !pending.isEmpty && !Task.isCancelled {
             let mail = pending.removeFirst()
             do {
-                try await sender?(mail, fromName)
-                records[mail.id] = SentMail(subject: mail.subject, body: mail.body)
+                // No transport means nothing was delivered. Recording these as
+                // sent would mark a whole batch of recruiters as mailed without a
+                // single mail leaving the account.
+                guard let sender else { throw MailQueueError.noTransport }
+                let delivery = try await sender(mail, fromName)
+                records[mail.id] = SentMail(subject: mail.subject, body: mail.body,
+                                            gmailMessageID: delivery?.messageID,
+                                            gmailThreadID: delivery?.threadID)
                 sent += 1
             } catch {
                 failed.append(mail.displayName)

@@ -69,9 +69,14 @@ enum SupabaseAPI {
 
     /// Every send this user has made, newest first. One row per send, so the
     /// same recruiter can appear multiple times (the send history).
+    ///
+    /// Selects `*` rather than a column list on purpose: the reply-tracking
+    /// columns only exist once the migration in the README has been run, and
+    /// naming a column PostgREST doesn't have fails the whole request. With `*`
+    /// the app runs either way and simply has no reply data until then.
     static func fetchSends(userEmail: String) async throws -> [MailSend] {
         let request = makeRequest(path: "mail_sends", query: [
-            URLQueryItem(name: "select", value: "id,recruiter_id,sent_at,subject,body"),
+            URLQueryItem(name: "select", value: "*"),
             URLQueryItem(name: "user_email", value: "eq.\(userEmail)"),
             URLQueryItem(name: "order", value: "sent_at.desc")
         ])
@@ -82,7 +87,7 @@ enum SupabaseAPI {
     /// The full send history for one recruiter, newest first.
     static func fetchSendHistory(userEmail: String, recruiterID: String) async throws -> [MailSend] {
         let request = makeRequest(path: "mail_sends", query: [
-            URLQueryItem(name: "select", value: "id,recruiter_id,sent_at,subject,body"),
+            URLQueryItem(name: "select", value: "*"),
             URLQueryItem(name: "user_email", value: "eq.\(userEmail)"),
             URLQueryItem(name: "recruiter_id", value: "eq.\(recruiterID)"),
             URLQueryItem(name: "order", value: "sent_at.desc")
@@ -120,7 +125,9 @@ enum SupabaseAPI {
             guard let row = byID[send.recruiterID] else { return nil }
             let contact = Contact(id: row.id, email: row.email ?? "", name: row.name ?? "",
                                   position: row.position ?? "", isSent: true, sentAt: send.sentAt,
-                                  sentSubject: send.subject, sentBody: send.body)
+                                  sentSubject: send.subject, sentBody: send.body,
+                                  repliedAt: send.repliedAt, replyFrom: send.replyFrom,
+                                  replySnippet: send.replySnippet)
             return ActivityEntry(id: send.id, company: row.companies?.name ?? "", contact: contact)
         }
     }
@@ -190,17 +197,73 @@ enum SupabaseAPI {
 
     /// Append a send event to this user's history for `recruiterID`. Each call
     /// is a new row, so re-sending builds up the history rather than overwriting.
-    static func recordSend(userEmail: String, recruiterID: String,
-                           mail: SentMail, at date: Date) async throws {
-        func value(_ s: String) -> Any { s.isEmpty ? NSNull() : s }
+    /// Append a whole run's sends in one request.
+    ///
+    /// PostgREST takes an array, and a batch send is the common case — a hundred
+    /// mails used to mean a hundred sequential round trips *after* the run, with
+    /// the app's data stale until the last one landed. One request also makes the
+    /// record atomic: previously a network drop halfway through left some of a
+    /// run recorded and the rest not, and the unrecorded half would be offered up
+    /// for sending again.
+    static func recordSends(userEmail: String, records: [Contact.ID: SentMail],
+                            at date: Date) async throws {
+        guard !records.isEmpty else { return }
+        func value(_ s: String?) -> Any { (s?.isEmpty ?? true) ? NSNull() : s! }
+
+        let rows: [[String: Any]] = records.map { id, mail in
+            [
+                "user_email": userEmail,
+                "recruiter_id": id,
+                "sent_at": iso(date),
+                "subject": value(mail.subject),
+                "body": value(mail.body),
+                "gmail_message_id": value(mail.gmailMessageID),
+                "gmail_thread_id": value(mail.gmailThreadID)
+            ]
+        }
+
+        do {
+            try await write(method: "POST", path: "mail_sends", rows: rows)
+        } catch SupabaseError.schemaOutOfDate {
+            // The reply-tracking columns aren't there yet. Record the sends
+            // without them rather than losing them: an unrecorded send is a
+            // recruiter who gets mailed a second time, which is far worse than
+            // missing metadata.
+            replyColumnsMissing = true
+            let stripped = rows.map { row -> [String: Any] in
+                var row = row
+                row["gmail_message_id"] = nil
+                row["gmail_thread_id"] = nil
+                return row
+            }
+            try await write(method: "POST", path: "mail_sends", rows: stripped)
+        }
+    }
+
+    /// Set once a write comes back reporting the reply columns don't exist, so the
+    /// UI can point at the migration instead of showing a raw PostgREST error.
+    private(set) static var replyColumnsMissing = false
+
+    /// Attach Gmail's ids to a send recorded before the app captured them —
+    /// recovered by searching the Sent mailbox (see `ReplySync`).
+    static func attachThread(sendID: String, messageID: String, threadID: String) async throws {
+        try await write(method: "PATCH", path: "mail_sends",
+                        query: [URLQueryItem(name: "id", value: "eq.\(sendID)")],
+                        body: ["gmail_message_id": messageID, "gmail_thread_id": threadID])
+    }
+
+    /// Record that someone answered this send. Written once — later syncs skip a
+    /// row that already has a `replied_at`, so the first reply is the one kept.
+    static func recordReply(sendID: String, at date: Date,
+                            from sender: String, snippet: String?) async throws {
         let body: [String: Any] = [
-            "user_email": userEmail,
-            "recruiter_id": recruiterID,
-            "sent_at": iso(date),
-            "subject": value(mail.subject),
-            "body": value(mail.body)
+            "replied_at": iso(date),
+            "reply_from": sender,
+            "reply_snippet": (snippet?.isEmpty ?? true) ? NSNull() : snippet!
         ]
-        try await write(method: "POST", path: "mail_sends", body: body)
+        try await write(method: "PATCH", path: "mail_sends",
+                        query: [URLQueryItem(name: "id", value: "eq.\(sendID)")],
+                        body: body)
     }
 
     // MARK: - Profile (per Gmail user)
@@ -294,6 +357,11 @@ enum SupabaseAPI {
             if http.statusCode == 409 || body.contains("\"23505\"") {
                 throw SupabaseError.duplicateCompany
             }
+            // PGRST204: PostgREST knows the table but not a column we sent. That's
+            // a pending migration, not a bug in the request.
+            if body.contains("PGRST204") {
+                throw SupabaseError.schemaOutOfDate
+            }
             throw SupabaseError.server(body)
         }
         return data
@@ -320,6 +388,16 @@ enum SupabaseAPI {
             throw SupabaseError.badResponse
         }
         return row.id
+    }
+
+    /// Insert several rows in one request.
+    private static func write(method: String, path: String, rows: [[String: Any]]) async throws {
+        var request = makeRequest(path: path)
+        request.httpMethod = method
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: rows)
+        try await send(request)
     }
 
     private static func write(method: String, path: String,
@@ -383,12 +461,17 @@ enum SupabaseAPI {
 enum SupabaseError: LocalizedError {
     case badResponse
     case duplicateCompany
+    /// The database is missing a column this build writes to — the reply-tracking
+    /// migration in the README hasn't been run yet.
+    case schemaOutOfDate
     case server(String)
 
     var errorDescription: String? {
         switch self {
         case .badResponse: return "Unexpected response from the server."
         case .duplicateCompany: return "A company with that name already exists."
+        case .schemaOutOfDate:
+            return "This database is missing the reply-tracking columns. Run the migration in the README."
         case .server(let message): return message
         }
     }

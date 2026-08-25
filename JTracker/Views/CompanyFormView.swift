@@ -25,7 +25,7 @@ struct CompanyFormView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            PaperForm {
                 Section("Company") {
                     TextField("Name", text: $name)
                         .textInputAutocapitalization(.words)
@@ -41,6 +41,7 @@ struct CompanyFormView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(confirmLabel) {
+                        Haptics.success()
                         onSave(trimmedName, sector.trimmingCharacters(in: .whitespaces))
                         dismiss()
                     }

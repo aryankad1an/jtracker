@@ -12,12 +12,16 @@ enum Theme {
 }
 
 extension ShapeStyle where Self == Color {
-    /// Positive / completed states: sent, applied, Gmail connected.
-    static var statusDone: Color { .green }
+    /// Positive / completed states: a reply landed, Gmail connected.
+    static var statusDone: Color { .olive }
 
-    /// Set-aside states: a contact marked invalid. Deliberately not red — nothing
-    /// has been destroyed, and red is reserved for delete.
-    static var statusInvalid: Color { .orange }
+    /// Set-aside states: a contact marked invalid, an address that bounced.
+    /// Deliberately not red — nothing has been destroyed, and red is reserved for
+    /// delete.
+    static var statusInvalid: Color { .kraft }
+
+    /// Mailed, no answer yet — neutral, not a failure.
+    static var statusWaiting: Color { .slate }
 }
 
 extension Color {
@@ -30,9 +34,22 @@ extension Color {
     /// letters) collided in visible clumps — a list would show the same color three
     /// rows running. Swift's own `hashValue` isn't an option, since it's seeded per
     /// process and would repaint every avatar on each launch.
+    /// The palette is muted on purpose. Saturated system colours turned a list of
+    /// recruiters into a bag of sweets and drowned the two colours that carry
+    /// meaning here — clay for actions, olive for replies. These are desaturated
+    /// enough to sit under the accent while still telling two rows apart, and
+    /// mid-toned enough to hold white text in either appearance.
     static func monogram(for text: String) -> Color {
-        let palette: [Color] = [.blue, .purple, .pink, .orange, .green,
-                                .teal, .indigo, .red, .brown]
+        let palette: [Color] = [
+            Color(red: 0.62, green: 0.36, blue: 0.24),   // clay
+            Color(red: 0.42, green: 0.47, blue: 0.36),   // olive
+            Color(red: 0.35, green: 0.44, blue: 0.53),   // slate
+            Color(red: 0.55, green: 0.40, blue: 0.47),   // plum
+            Color(red: 0.63, green: 0.51, blue: 0.30),   // kraft
+            Color(red: 0.31, green: 0.48, blue: 0.47),   // teal
+            Color(red: 0.48, green: 0.42, blue: 0.56),   // iris
+            Color(red: 0.58, green: 0.34, blue: 0.33)    // rust
+        ]
         var hash: UInt64 = 5381
         for byte in text.utf8 {
             hash = (hash &* 33) ^ UInt64(byte)
@@ -56,6 +73,47 @@ extension String {
     /// Actual "\n"/"\n\n" from a real Return keypress are left untouched.
     var sanitizedLineSeparators: String {
         replacingOccurrences(of: "[\u{2028}\u{2029}\u{0085}]", with: " ", options: .regularExpression)
+    }
+}
+
+extension String {
+    /// Undo HTML escaping.
+    ///
+    /// Gmail's `snippet` is HTML — it comes out of the message body, so an
+    /// apostrophe arrives as `&#39;` and an ampersand as `&amp;`. Shown raw, a
+    /// recruiter's "We've noted your profile" reads as "We&#39;ve noted", which
+    /// looks like the app is broken rather than like a quote.
+    ///
+    /// Deliberately a small table plus numeric references rather than
+    /// `NSAttributedString(html:)`: that initialiser spins up WebKit, must run on
+    /// the main actor, and is far too heavy for one line of preview text.
+    var htmlUnescaped: String {
+        guard contains("&") else { return self }
+
+        let named = ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
+                     "&apos;": "'", "&nbsp;": " ", "&hellip;": "…", "&mdash;": "—",
+                     "&ndash;": "–", "&rsquo;": "'", "&lsquo;": "'",
+                     "&ldquo;": "\u{201C}", "&rdquo;": "\u{201D}"]
+
+        var result = self
+        for (entity, character) in named {
+            result = result.replacingOccurrences(of: entity, with: character,
+                                                 options: .caseInsensitive)
+        }
+
+        // Numeric references: &#39; and &#x2019; alike.
+        let pattern = /&#(x?)([0-9A-Fa-f]+);/
+        while let match = result.firstMatch(of: pattern) {
+            let radix = match.1.isEmpty ? 10 : 16
+            guard let code = UInt32(match.2, radix: radix),
+                  let scalar = Unicode.Scalar(code) else {
+                // Unrepresentable: drop the reference rather than looping forever.
+                result.replaceSubrange(match.range, with: "")
+                continue
+            }
+            result.replaceSubrange(match.range, with: String(Character(scalar)))
+        }
+        return result
     }
 }
 

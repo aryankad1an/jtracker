@@ -27,36 +27,50 @@ struct TemplatesView: View {
     @ViewBuilder
     private func templateRows(_ templates: [MailTemplate]) -> some View {
         ForEach(templates) { template in
-            if isSelecting {
-                TemplateRow(template: template)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-            } else {
-                TemplateRow(template: template)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                    .contentShape(Rectangle())
-                    .onTapGesture { editingTemplate = template }
-                    .swipeActions(edge: .trailing) {
+            TemplateRow(template: template)
+                .listRowInsets(EdgeInsets(top: 4, leading: Theme.Space.gutter,
+                                          bottom: 4, trailing: Theme.Space.gutter))
+                // Templates get the card press treatment for the first time here:
+                // the row used to be a bare tap gesture, so it was the one list in
+                // the app that didn't answer a finger.
+                .selectableRow(isSelecting: isSelecting) {
+                    beginSelection(with: template.id)
+                } onTap: {
+                    editingTemplate = template
+                }
+                .swipeActions(edge: .trailing) {
+                    if !isSelecting {
                         Button(role: .destructive) {
+                            Haptics.thud()
                             Task { await store.delete(template) }
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
                     }
-            }
+                }
         }
     }
 
     private func enterSelection() {
         selection = []
-        withAnimation { isSelecting = true }
+        Haptics.press()
+        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
+    }
+
+    /// Entered by holding a row, with that row already picked.
+    private func beginSelection(with id: MailTemplate.ID) {
+        selection = [id]
+        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
     }
 
     private func exitSelection() {
-        withAnimation { isSelecting = false }
+        Haptics.tap(0.5)
+        withAnimation(Theme.Motion.bouncy) { isSelecting = false }
         selection = []
     }
 
     private func deleteSelected() {
+        Haptics.thud()
         let toDelete = store.templates.filter { selection.contains($0.id) }
         Task {
             for template in toDelete {
@@ -81,12 +95,19 @@ struct TemplatesView: View {
                 } else {
                     List(selection: $selection) {
                         Section { templateRows(filtered) }
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.paper)
                     .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
                     // Templates are per-account, not per-device — pull to sync in
                     // whatever another of the user's signed-in clients has saved.
                     .refreshable { await store.refresh() }
+                    // A template saved on another device arriving mid-pull should
+                    // spring into the list, not blink into it.
+                    .animation(Theme.Motion.bouncy, value: filtered.map(\.id))
                 }
             }
             .navigationTitle("Templates")
@@ -169,17 +190,18 @@ private struct TemplateRow: View {
                     .font(.headline)
                 Text(template.subject)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.inkMuted)
                     .lineLimit(1)
             }
 
             Spacer()
 
             Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.inkFaint)
         }
-        .padding(.vertical, 4)
+        .padding(12)
+        .panel()
     }
 }
 

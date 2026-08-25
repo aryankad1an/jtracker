@@ -55,7 +55,7 @@ struct ContactDetailView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            PaperForm {
                 if !isContactValid { invalidBanner }
 
                 RecruiterFields(email: $email, name: $name, position: $position, phone: $phone,
@@ -67,14 +67,17 @@ struct ContactDetailView: View {
                     if isLoadingHistory {
                         HStack(spacing: 10) {
                             ProgressView()
-                            Text("Loading history…").foregroundStyle(.secondary)
+                            Text("Loading history…").foregroundStyle(.inkMuted)
                         }
                     } else if history.isEmpty {
                         Text("No mail sent to this contact yet.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.inkMuted)
                     } else {
                         ForEach(history) { send in
-                            Button { selectedSend = send } label: {
+                            Button {
+                                Haptics.tap()
+                                selectedSend = send
+                            } label: {
                                 historyRow(send)
                             }
                             .tint(.primary)
@@ -90,9 +93,13 @@ struct ContactDetailView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        if isEditing { cancelEdit() } else { isEditing = true }
+                        Haptics.tap()
+                        withAnimation(Theme.Motion.bouncy) {
+                            if isEditing { cancelEdit() } else { isEditing = true }
+                        }
                     } label: {
                         Image(systemName: isEditing ? "xmark" : "pencil")
+                            .contentTransition(.symbolEffect(.replace))
                     }
                     .accessibilityLabel(isEditing ? "Cancel editing" : "Edit recruiter")
                 }
@@ -100,7 +107,10 @@ struct ContactDetailView: View {
                     if isEditing {
                         Button("Save") { save() }.disabled(!canSave)
                     } else {
-                        Button("Done") { dismiss() }
+                        Button("Done") {
+                            Haptics.tap(0.5)
+                            dismiss()
+                        }
                     }
                 }
             }
@@ -122,13 +132,15 @@ struct ContactDetailView: View {
                         .font(.subheadline.weight(.semibold))
                     Text("Not suggested to anyone, and can't be mailed.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.inkMuted)
                 }
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.statusInvalid)
+                    .symbolEffect(.bounce, value: isContactValid)
             }
         }
+        .popIn(anchor: .top)
     }
 
     /// The rule-in/rule-out control. Its own section under the fields: it isn't an
@@ -138,7 +150,11 @@ struct ContactDetailView: View {
         Section {
             Button {
                 let next = !isContactValid
-                isContactValid = next
+                // Ruling someone out and putting them back are opposite acts, and
+                // the phone should say which one just happened — the banner above
+                // appears or disappears either way, which on its own is ambiguous.
+                if next { Haptics.success() } else { Haptics.thud() }
+                withAnimation(Theme.Motion.bouncy) { isContactValid = next }
                 onSetValidity(next)
             } label: {
                 // Icon and text are coloured explicitly rather than via `.tint`:
@@ -171,14 +187,14 @@ struct ContactDetailView: View {
                 if let subject = send.subject, !subject.isEmpty {
                     Text(subject)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.inkMuted)
                         .lineLimit(1)
                 }
             }
             Spacer()
             Image(systemName: "chevron.right")
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.inkFaint)
         }
         .padding(.vertical, 2)
     }
@@ -218,7 +234,8 @@ struct ContactDetailView: View {
         )
         committed = updated
         email = updated.email      // reflect the lowercased email back in the field
+        Haptics.success()
         onSave(updated)
-        isEditing = false
+        withAnimation(Theme.Motion.bouncy) { isEditing = false }
     }
 }

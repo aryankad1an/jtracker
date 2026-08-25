@@ -14,7 +14,7 @@ struct ContactFormView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            PaperForm {
                 RecruiterFields(email: $email, name: $name, position: $position, phone: $phone)
             }
             .navigationTitle("Add Cold Mail")
@@ -25,6 +25,7 @@ struct ContactFormView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        Haptics.success()
                         onSave(Contact(
                             email: email.lowercased(),
                             name: name,

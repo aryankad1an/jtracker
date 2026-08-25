@@ -15,24 +15,28 @@ struct CompaniesView: View {
     @State private var pendingDelete: Job?
     @State private var isAdding = false
     @State private var editingCompany: Job?
+    /// Rows push through this rather than through `NavigationLink`, so the card
+    /// can carry its own chevron instead of the system drawing one outside it.
+    @State private var path = NavigationPath()
+
+    private var query: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// Companies to show: catalog filtered by the "show empty" toggle and the
-    /// search text (name or sector). Already name-sorted by the store.
+    /// search text. Already name-sorted by the store.
+    ///
+    /// A search overrides "show empty": having typed a name, a company that
+    /// matches it but has no contacts yet is a result, not a row to hide — and
+    /// hiding it is indistinguishable from the company not existing, which is the
+    /// question the search was asked to answer.
     private var filtered: [Job] {
-        var list = jobStore.allCompanies
-        if !showEmpty { list = list.filter { !$0.contacts.isEmpty } }
-        let query = searchText.trimmingCharacters(in: .whitespaces)
-        if !query.isEmpty {
-            list = list.filter {
-                $0.company.localizedCaseInsensitiveContains(query) ||
-                ($0.sector?.localizedCaseInsensitiveContains(query) ?? false)
-            }
-        }
-        return list
+        guard query.isEmpty else { return jobStore.allCompanies.filter { $0.matches(query) } }
+        return showEmpty ? jobStore.allCompanies : jobStore.allCompanies.filter { !$0.contacts.isEmpty }
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if jobStore.allCompanies.isEmpty {
                     if jobStore.isLoading {
@@ -45,15 +49,33 @@ struct CompaniesView: View {
                 } else {
                     List(selection: $selection) {
                         Section { companyRows(filtered) }
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 4, leading: Theme.Space.gutter,
+                                                      bottom: 4, trailing: Theme.Space.gutter))
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.paper)
                     .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
                     .refreshable { await jobStore.load() }
+                    // Companies added, deleted, or filtered out spring rather than
+                    // cut, so the catalog changing is visible without a banner.
+                    .animation(Theme.Motion.bouncy, value: filtered.map(\.id))
+                    // Each row's pin appears and disappears with the same spring.
+                    .animation(Theme.Motion.pop, value: jobStore.jobs.count)
+                    // ...but not while typing: springing the list once per
+                    // keystroke makes a search read as a shuffle.
+                    .animation(nil, value: query)
+                    .scrollDismissesKeyboard(.immediately)
                 }
             }
             .navigationTitle("Companies")
             .navigationBarTitleDisplayMode(.large)
-            .searchable(text: $searchText, prompt: "Search companies")
+            .navigationDestination(for: String.self) { companyID in
+                JobDetailView(jobID: companyID)
+            }
+            .searchable(text: $searchText, prompt: "Search companies, sectors, people")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     if isSelecting {
@@ -126,14 +148,17 @@ struct CompaniesView: View {
     private func companyRows(_ companies: [Job]) -> some View {
         ForEach(companies) { company in
             let tracked = jobStore.isTracked(company.id)
-            NavigationLink {
-                JobDetailView(jobID: company.id)
-            } label: {
-                CompanyRow(job: company, isTracked: tracked)
-            }
-            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            CompanyRow(job: company, isTracked: tracked)
+                .selectableRow(isSelecting: isSelecting) {
+                    beginSelection(with: company.id)
+                } onTap: {
+                    path.append(company.id)
+                }
             .swipeActions(edge: .trailing) {
                 Button(role: .destructive) {
+                    // A warning, not a knock: this swipe opens a dialog that
+                    // deletes for every user, and it should feel like a stop.
+                    Haptics.warning()
                     pendingDelete = company
                 } label: {
                     Label("Delete", systemImage: "trash")
@@ -144,36 +169,51 @@ struct CompaniesView: View {
                 // triggers it; Edit sits behind it.
                 if tracked {
                     Button {
+                        Haptics.tap()
                         jobStore.untrack(companyID: company.id)
                     } label: {
                         Label("Untrack", systemImage: "pin.slash")
                     }
-                    .tint(.gray)
+                    .tint(.slate)
                 } else {
                     Button {
+                        // Pinning something to Home is the one constructive swipe
+                        // on this screen, so it lands firmer than untracking does.
+                        Haptics.press()
                         jobStore.track(companyID: company.id)
                     } label: {
                         Label("Track", systemImage: "pin")
                     }
-                    .tint(.green)
+                    .tint(.olive)
                 }
                 Button {
+                    Haptics.tap()
                     editingCompany = company
                 } label: {
                     Label("Edit", systemImage: "pencil")
                 }
-                .tint(.blue)
+                .tint(.clay)
             }
         }
     }
 
     private func enterSelection() {
         selection = []
-        withAnimation { isSelecting = true }
+        Haptics.press()
+        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
+    }
+
+    /// Entered by holding a row: the mode arrives with that row already picked,
+    /// which is the whole reason to hold *this* row rather than any other. The
+    /// knock is played by `SelectionHold`, so there's none here.
+    private func beginSelection(with id: String) {
+        selection = [id]
+        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
     }
 
     private func exitSelection() {
-        withAnimation { isSelecting = false }
+        Haptics.tap(0.5)
+        withAnimation(Theme.Motion.bouncy) { isSelecting = false }
         selection = []
     }
 
@@ -189,8 +229,12 @@ struct CompaniesView: View {
         ) {
             if allTracked {
                 for company in selected { jobStore.untrack(companyID: company.id) }
+                Haptics.tap()
             } else {
                 jobStore.trackCompanies(Array(selection))
+                // One beat per company, capped — a bulk track should feel like
+                // more than a single one did.
+                Haptics.cascade(selection.count)
             }
             exitSelection()
         }
@@ -198,6 +242,7 @@ struct CompaniesView: View {
 
     private func deleteSelected() {
         let ids = Array(selection)
+        Haptics.thud()
         exitSelection()
         Task { for id in ids { await jobStore.deleteCompanyUpstream(id) } }
     }
@@ -221,21 +266,25 @@ struct CompaniesView: View {
         ContentUnavailableView {
             Label("No Companies", systemImage: "magnifyingglass")
         } description: {
-            Text(showEmpty
-                 ? "No companies match your search."
-                 : "No companies with contacts. Turn on “Show empty companies” to see the rest.")
+            Text(query.isEmpty
+                 ? "No companies with contacts. Turn on “Show empty companies” to see the rest."
+                 : "No company, sector or contact matches “\(query)”.")
         }
     }
 }
 
-/// A company row in the Companies list: monogram, name, an optional sector, a pin
-/// when tracked, and a fixed-size contacts-count pill that never truncates.
+/// A company card in the Companies list: monogram, name, an optional sector, a
+/// pin when tracked, and a fixed-size contacts-count pill that never truncates.
+/// A reply chip appears once anyone here has written back, so the catalog carries
+/// the same outreach state Home and Insights do.
 private struct CompanyRow: View {
     let job: Job
     let isTracked: Bool
 
+    private var replied: Int { job.repliedContacts.count }
+
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             MonogramAvatar(text: job.company, systemImage: "building.2.fill")
 
             VStack(alignment: .leading, spacing: 3) {
@@ -247,21 +296,38 @@ private struct CompanyRow: View {
                         Image(systemName: "pin.fill")
                             .font(.caption2)
                             .foregroundStyle(.tint)
+                            // The pin springs in the moment a swipe tracks the
+                            // company, on the row the swipe happened on.
+                            .transition(.scale(scale: 0.2).combined(with: .opacity))
                     }
                 }
                 if let sector = job.sector, !sector.isEmpty {
                     Text(sector)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.inkMuted)
                         .lineLimit(1)
+                }
+                // Own line, for the same reason as Home's card: a long sector name
+                // beside a fixed-width chip overflowed the row on a narrow phone.
+                if replied > 0 {
+                    StatusChip(text: "\(replied) replied",
+                               systemImage: "arrowshape.turn.up.left.fill",
+                               color: .statusDone)
+                        .padding(.top, 1)
                 }
             }
 
             Spacer(minLength: 8)
 
             countPill
+
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.inkFaint)
         }
-        .padding(.vertical, 4)
+        .padding(12)
+        .panel()
+        .animation(Theme.Motion.pop, value: isTracked)
     }
 
     /// The contact count as a compact capsule. `fixedSize` keeps it at its
@@ -273,7 +339,7 @@ private struct CompanyRow: View {
             Text("\(job.contacts.count)")
         }
         .font(.caption2.weight(.semibold))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.inkMuted)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(.secondary.opacity(0.15), in: Capsule())

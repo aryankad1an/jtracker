@@ -71,16 +71,16 @@ struct SendMailView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            PaperForm {
                 if !gmail.isConnected {
                     Label("Connect Gmail in Profile to send mail.",
                           systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.kraft)
                 }
 
                 Section("Template") {
                     if templateStore.templates.isEmpty {
-                        Text("Create a template first.").foregroundStyle(.secondary)
+                        Text("Create a template first.").foregroundStyle(.inkMuted)
                     } else {
                         Picker("Template", selection: $templateID) {
                             Text("Choose…").tag(MailTemplate.ID?.none)
@@ -114,6 +114,7 @@ struct SendMailView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Next") {
+                        Haptics.press()
                         editablePreviews = previews
                         showingPreview = true
                     }.disabled(!canSend)
@@ -125,6 +126,7 @@ struct SendMailView: View {
             .onAppear {
                 if templateID == nil { templateID = templateStore.templates.first?.id }
             }
+            .sensoryFeedback(.selection, trigger: templateID)
         }
     }
 
@@ -132,14 +134,14 @@ struct SendMailView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.name.isEmpty ? contact.email : contact.name)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.ink)
                     .lineLimit(1)
                 // Skipped when the name is already the address, which otherwise
                 // printed the same string on both lines.
                 if !contact.name.isEmpty {
                     Text(contact.email)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.inkMuted)
                         .lineLimit(1)
                 }
             }
@@ -147,12 +149,19 @@ struct SendMailView: View {
             // Already-mailed contacts start unselected. Without the pill that
             // reads as an arbitrary half-ticked list — this is the reason.
             SentPill(sentAt: contact.sentAt)
-            Image(systemName: selection.contains(contact.id) ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(selection.contains(contact.id) ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            let isOn = selection.contains(contact.id)
+            Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                // The tick bounces as it fills, so a run down a long recipient
+                // list has something to watch as well as something to feel.
+                .symbolEffect(.bounce, value: isOn)
+                .scaleEffect(isOn ? 1.1 : 1)
+                .animation(Theme.Motion.pop, value: isOn)
         }
     }
 
     private func toggle(_ id: Contact.ID) {
+        Haptics.select()
         if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
     }
 
@@ -165,6 +174,10 @@ struct SendMailView: View {
                            subject: $0.subject, body: $0.body)
         }
         guard !mails.isEmpty else { return }
+        // A rising run, one beat per mail. Sending eight shouldn't feel identical
+        // to sending one, and this is the last moment the user is still holding
+        // the phone waiting to find out that it worked.
+        Haptics.cascade(mails.count)
         mailQueue.enqueue(mails, fromName: profileStore.profile.name)
         dismiss()
     }
@@ -242,6 +255,11 @@ struct MailPreviewView: View {
         }
         .navigationTitle(previews.count == 1 ? "Review Mail" : "Review \(previews.count) Mails")
         .navigationBarTitleDisplayMode(.inline)
+        // Filtering the deck to one company, or re-templating it, rebuilds the
+        // cards under the user's finger — springing them keeps that legible as
+        // the same deck rather than as a new screen.
+        .animation(Theme.Motion.bouncy, value: companyFilter)
+        .animation(Theme.Motion.bouncy, value: displayed.map(\.subject))
         .safeAreaInset(edge: .bottom) { sendBar }
         .sheet(item: $editingPreview) { preview in
             MailEditorView(preview: preview) { subject, body in
@@ -276,6 +294,7 @@ struct MailPreviewView: View {
         HStack(spacing: 12) {
             Menu {
                 Button {
+                    Haptics.select()
                     companyFilter = nil
                 } label: {
                     if companyFilter == nil {
@@ -287,6 +306,7 @@ struct MailPreviewView: View {
                 Divider()
                 ForEach(companies, id: \.self) { company in
                     Button {
+                        Haptics.select()
                         companyFilter = company
                     } label: {
                         if companyFilter == company {
@@ -334,6 +354,7 @@ struct MailPreviewView: View {
     /// Re-render the currently-shown cards from `template`, replacing their earlier
     /// render (and any manual edits) for just that filtered set of companies.
     private func applyTemplate(_ template: MailTemplate) {
+        Haptics.press()
         let profile = profileStore.profile
         let ids = Set(displayed.map(\.id))
         for index in previews.indices where ids.contains(previews[index].id) {
@@ -362,18 +383,19 @@ struct MailPreviewView: View {
                         .lineLimit(1)
                     Text(preview.email)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.inkMuted)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
                 Button {
+                    Haptics.tap()
                     editingPreview = preview
                 } label: {
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(.tint)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(BouncyPress(scale: 0.84))
                 .accessibilityLabel("Edit mail to \(preview.name)")
             }
 
@@ -382,7 +404,7 @@ struct MailPreviewView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("SUBJECT")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.inkMuted)
                 Text(preview.subject)
                     .font(.subheadline.weight(.semibold))
             }
@@ -390,7 +412,7 @@ struct MailPreviewView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("MESSAGE")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.inkMuted)
                 ScrollView {
                     messageText(preview.body)
                 }
@@ -398,13 +420,13 @@ struct MailPreviewView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color.paperRaised, in: RoundedRectangle(cornerRadius: 18))
     }
 
     private func messageText(_ text: String) -> some View {
         Text(text)
             .font(.callout)
-            .foregroundStyle(.primary)
+            .foregroundStyle(.ink)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -415,7 +437,11 @@ struct MailPreviewView: View {
             Button(action: onSendAll) {
                 HStack(spacing: 8) {
                     Image(systemName: "paperplane.fill")
+                        // The plane takes off with the count, so re-templating or
+                        // filtering the deck visibly reloads the button too.
+                        .symbolEffect(.bounce, value: previews.count)
                     Text(previews.count == 1 ? "Send" : "Send All (\(previews.count))")
+                        .contentTransition(.numericText())
                 }
                 .fontWeight(.semibold)
                 .frame(maxWidth: .infinity)
@@ -423,8 +449,10 @@ struct MailPreviewView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .padding()
+            .animation(Theme.Motion.pop, value: previews.count)
         }
-        .background(.bar)
+        .background(Color.paperRaised)
+        .overlay(alignment: .top) { Divider().overlay(Color.hairline) }
     }
 }
 
@@ -449,14 +477,14 @@ struct MailEditorView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            PaperForm {
                 Section("To") {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(name)
                             .font(.subheadline.weight(.semibold))
                         Text(email)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.inkMuted)
                     }
                 }
                 Section("Subject") {
@@ -476,6 +504,7 @@ struct MailEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        Haptics.success()
                         onSave(subject.sanitizedLineSeparators, messageBody.sanitizedLineSeparators)
                         dismiss()
                     }

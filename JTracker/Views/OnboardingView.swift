@@ -9,18 +9,23 @@ struct OnboardingView: View {
         @Bindable var store = store
 
         NavigationStack {
-            Form {
+            PaperForm {
                 Section {
                     Text("Tell us about yourself. This fills in your cold-mail templates and is saved to your account.")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.inkMuted)
                 }
 
                 ProfileFields(profile: $store.profile)
 
                 Section {
                     Button {
-                        Task { await store.save() }
+                        Haptics.press()
+                        Task {
+                            // The one gate into the app: worth saying plainly
+                            // which way it went before the screen changes.
+                            if await store.save() { Haptics.success() } else { Haptics.failure() }
+                        }
                     } label: {
                         HStack {
                             Spacer()
@@ -78,7 +83,7 @@ struct ProfileFields: View {
             } else if profile.isStudying {
                 LabeledContent("College", value: profile.college.isEmpty ? "Not set" : profile.college)
             } else {
-                Text("Not currently studying").foregroundStyle(.secondary)
+                Text("Not currently studying").foregroundStyle(.inkMuted)
             }
         }
 
@@ -93,7 +98,7 @@ struct ProfileFields: View {
                 LabeledContent("Company", value: profile.company.isEmpty ? "Not set" : profile.company)
                 LabeledContent("Position", value: profile.position.isEmpty ? "Not set" : profile.position)
             } else {
-                Text("Not currently working").foregroundStyle(.secondary)
+                Text("Not currently working").foregroundStyle(.inkMuted)
             }
         }
 
@@ -104,7 +109,7 @@ struct ProfileFields: View {
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
             } else if profile.resumeLink.isEmpty {
-                Text("No resume link").foregroundStyle(.secondary)
+                Text("No resume link").foregroundStyle(.inkMuted)
             } else {
                 LabeledContent("Link", value: profile.resumeLink)
             }

@@ -75,6 +75,10 @@ struct JobDetailView: View {
                 } else {
                     List(selection: $selection) {
                         Section { contactRows(active) }
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 4, leading: Theme.Space.gutter,
+                                                      bottom: 4, trailing: Theme.Space.gutter))
                         // Ruled-out contacts keep their place in the company —
                         // they're the record of who has already been tried — but
                         // they sit below everything live, behind a header that
@@ -94,14 +98,25 @@ struct JobDetailView: View {
                                 // than the contacts it was describing.
                                 Text("Wrong address, or the person has left. These are never suggested and can't be mailed. Swipe right to put one back.")
                                     .font(.footnote)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.inkMuted)
                                     .padding(.top, 4)
                             }
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 4, leading: Theme.Space.gutter,
+                                                      bottom: 4, trailing: Theme.Space.gutter))
                         }
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.paper)
                     .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
                     .refreshable { await jobStore.load() }
+                    // Marking a contact invalid moves it from the working list to
+                    // the group at the bottom. Springing that move is the feedback
+                    // for the swipe — the row visibly travels to where it now lives.
+                    .animation(Theme.Motion.bouncy, value: active.map(\.id))
+                    .animation(Theme.Motion.bouncy, value: invalid.map(\.id))
                 }
             }
         }
@@ -219,11 +234,19 @@ struct JobDetailView: View {
 
     private func enterSelection() {
         selection = []
-        withAnimation { isSelecting = true }
+        Haptics.press()
+        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
+    }
+
+    /// Entered by holding a row, with that contact already picked.
+    private func beginSelection(with id: Contact.ID) {
+        selection = [id]
+        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
     }
 
     private func exitSelection() {
-        withAnimation { isSelecting = false }
+        Haptics.tap(0.5)
+        withAnimation(Theme.Motion.bouncy) { isSelecting = false }
         selection = []
     }
 
@@ -242,6 +265,7 @@ struct JobDetailView: View {
             // Only flip the ones that need it, so re-marking a mixed selection
             // doesn't rewrite rows that were already where they belong.
             let ids = selected.filter { $0.isValid == allInvalid }.map(\.id)
+            if allInvalid { Haptics.success() } else { Haptics.thud() }
             exitSelection()
             Task { await jobStore.setValidity(ids, isValid: allInvalid) }
         }
@@ -249,6 +273,7 @@ struct JobDetailView: View {
 
     private func deleteSelected() {
         guard let job else { return }
+        Haptics.thud()
         // Sent mails are a permanent record — never delete them.
         let toDelete = job.contacts.filter { selection.contains($0.id) && !$0.isSent }
         Task {
@@ -271,10 +296,17 @@ struct JobDetailView: View {
                            ? { startCompose(preselect: [contact.id]) } : nil)
                     .contentShape(Rectangle())
                     .onTapGesture { detailContact = contact }
+                    // Gesture-only, not `selectableRow`: this row carries its own
+                    // send button, and a button nested inside a button stops
+                    // receiving taps.
+                    .holdToSelect(isSelecting: isSelecting) {
+                        beginSelection(with: contact.id)
+                    }
                     // Sent mails are a permanent record, so no delete swipe.
                     .swipeActions(edge: .trailing) {
                         if !contact.isSent {
                             Button(role: .destructive) {
+                                Haptics.warning()
                                 pendingDelete = contact
                             } label: {
                                 Label("Delete", systemImage: "trash")
@@ -286,6 +318,9 @@ struct JobDetailView: View {
                     // the same swipe brings it back.
                     .swipeActions(edge: .leading) {
                         Button {
+                            // Two directions, two tones: ruling someone out is a
+                            // flat knock, putting them back is the success chime.
+                            if contact.isValid { Haptics.thud() } else { Haptics.success() }
                             Task { await jobStore.setValidity([contact.id], isValid: !contact.isValid) }
                         } label: {
                             Label(contact.isValid ? "Invalid" : "Valid",
@@ -335,12 +370,12 @@ private struct ContactRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
-                    .foregroundStyle(contact.isValid ? .primary : .secondary)
+                    .foregroundStyle(contact.isValid ? Color.ink : Color.inkMuted)
                     .lineLimit(1)
                 if let subtitle {
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundStyle(contact.isValid ? .secondary : .tertiary)
+                        .foregroundStyle(contact.isValid ? Color.inkMuted : Color.inkFaint)
                         .lineLimit(1)
                 }
             }
@@ -348,27 +383,49 @@ private struct ContactRow: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
-                // One chip, not two: for a ruled-out contact "Invalid" is the fact
-                // that matters, and stacking it next to "Sent 3 weeks ago" only
-                // crowds the row with the less useful half.
-                if contact.isValid {
-                    SentPill(sentAt: contact.sentAt)
-                } else {
+                // One chip, never a stack. Each state outranks the one below it:
+                // "Invalid" is the only fact that matters for a ruled-out contact,
+                // and once someone has replied, when the mail went out stops being
+                // the useful half.
+                if !contact.isValid {
                     InvalidPill()
+                } else if contact.hasReplied {
+                    RepliedPill(at: contact.repliedAt)
+                } else {
+                    SentPill(sentAt: contact.sentAt)
                 }
                 if let onSend {
-                    Button(action: onSend) {
+                    Button {
+                        Haptics.press()
+                        onSend()
+                    } label: {
                         Image(systemName: "paperplane.fill")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(.tint)
                             .frame(width: 36, height: 36)
                             .background(.tint.opacity(0.12), in: Circle())
                     }
-                    .buttonStyle(.borderless)
+                    // Its own press treatment rather than the row's: the button is
+                    // a target inside a card, and it should dip on its own.
+                    .buttonStyle(BouncyPress(scale: 0.82))
                     .accessibilityLabel(contact.isSent ? "Send again to \(title)" : "Send to \(title)")
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(12)
+        .panelAccented(cardAccent)
+        // The chip that replaces another one (Sent becoming Replied, anything
+        // becoming Invalid) springs rather than cross-fades.
+        .animation(Theme.Motion.pop, value: contact.isValid)
+        .animation(Theme.Motion.pop, value: contact.hasReplied)
+    }
+
+    /// The rule down the card's leading edge, and the only colour on it. It marks
+    /// state, not identity: olive once they've answered, faint when they've been
+    /// ruled out, and nothing at all for the ordinary case — a list where every
+    /// row is marked is a list with no marks.
+    private var cardAccent: Color? {
+        if !contact.isValid { return .inkFaint }
+        return contact.hasReplied ? .statusDone : nil
     }
 }

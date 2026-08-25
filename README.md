@@ -24,6 +24,12 @@ Google (Gmail) OAuth for sending mail.
   person has left. They drop to their own group at the bottom of the company
   page, are never suggested, and can no longer be mailed — reversibly, and for
   every user, since a dead address is dead for everyone.
+- **Reply tracking** — every send records the Gmail thread it started, and the
+  app reads those threads back to see who answered. Replies show up in Activity
+  and drive Insights.
+- **Insights** — Home's headline: reply rate, who has gone quiet longest,
+  who answered (with the first lines of what they said), every unanswered mail
+  by company, and who hasn't been contacted yet.
 
 ## Architecture
 
@@ -44,6 +50,37 @@ state — ruling a contact out is a fact about the address, so it applies to
 everyone. It's written only by the dedicated `setRecruiterValidity` call, never
 as part of an ordinary field edit, so correcting a bad address can't silently
 put the contact back in circulation.
+
+Reply state is the opposite: per-user, on `mail_sends`, because whether someone
+wrote back is a fact about one mailbox. `ReplySync` runs two passes over Gmail —
+it recovers the thread id for sends made before the app captured them (an exact
+`in:sent to:… after:… before:…` lookup, not a guess), then reads each unanswered
+thread's headers for a message that isn't ours. Matching inbound mail by sender
+address was the obvious alternative and is worse: replies routinely arrive from a
+colleague or an applicant-tracking system, and both keep the thread id while
+neither keeps the address. Our own messages, out-of-office auto-replies and
+bounces are excluded on three different header signals — see `ReplySync`.
+
+## Design
+
+The interface is warm and paper-like rather than the iOS default of neutral greys
+on white: an ivory ground, warm near-black ink, hairline rules, and a single clay
+accent. Two files hold all of it — `Support/Palette.swift` (colour and type) and
+`Support/DesignSystem.swift` (surfaces, metrics, chips, the selector) — so a
+screen never picks a colour or a corner radius of its own.
+
+Three rules the components encode:
+
+- **One surface.** Anything raised is the same paper at the same radius behind
+  the same hairline. Depth is a rule, not a shadow.
+- **Colour is information.** A card is coloured only when its colour means
+  something, and then only as a rule down its leading edge: olive for a reply,
+  a heat scale for how long a silence has run, faint for a contact ruled out.
+  Decorative tint was removed — when every card was tinted, the tint that
+  mattered was invisible.
+- **Serif for titles and figures.** Navigation titles, the reply rate, and the
+  day counts are set in the system serif; everything else is the system sans. A
+  serif numeral among sans labels reads as a headline without being large.
 
 ## Requirements
 
@@ -70,10 +107,37 @@ Schema changes the app expects, newest first. Run them in the Supabase SQL
 editor; each is safe to re-run.
 
 ```sql
+-- Reply tracking. Gmail's ids for each send, and what came back.
+alter table mail_sends
+  add column if not exists gmail_message_id text,
+  add column if not exists gmail_thread_id  text,
+  add column if not exists replied_at       timestamptz,
+  add column if not exists reply_from       text,
+  add column if not exists reply_snippet    text;
+
+create index if not exists mail_sends_thread_idx
+  on mail_sends (user_email, gmail_thread_id);
+
 -- Contacts that bounce, or whose owner has left the company.
 alter table recruiters
   add column if not exists is_valid boolean not null default true;
 ```
+
+Until the first block is applied the app still runs — sends are recorded without
+their Gmail ids and Insights shows no replies — and it says so on the Insights
+panel rather than failing.
+
+### Google OAuth
+
+Reply tracking reads the mailbox, so the app requests `gmail.readonly` alongside
+`gmail.send`. Two consequences:
+
+- **Reconnect once after updating.** An existing token was minted without the
+  read scope; Gmail rejects reads with a 403 until you disconnect and reconnect
+  Gmail from the Profile tab.
+- **`gmail.readonly` is a restricted scope.** While the OAuth consent screen is
+  in *Testing* it works for listed test users as-is. Publishing an app that uses
+  it requires Google's verification and an annual security assessment.
 
 > **Note:** The Supabase anon key and the Google iOS client ID are not secrets —
 > iOS clients ship them and rely on Row Level Security and PKCE. Do not, however,

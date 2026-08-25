@@ -3,12 +3,43 @@ import SwiftUI
 /// The app's root: a bottom tab bar (Home, Companies, Activity, Templates,
 /// Profile). Owns the shared stores and injects them into the environment.
 struct RootView: View {
+    /// Applied once, before the first bar is drawn. The Taptic Engine is primed
+    /// at the same time so the first knock of a session isn't the late one.
+    init() {
+        AppAppearance.apply()
+        Haptics.prepare()
+    }
+
     @State private var jobStore = JobStore()
     @State private var profileStore = ProfileStore()
     @State private var templateStore = TemplateStore()
     @State private var gmailAuth = GmailAuthStore()
     @State private var mailQueue = MailQueue()
+    @State private var replySync = ReplySync()
     @State private var selectedTab: Tab = .home
+    @Environment(\.scenePhase) private var scenePhase
+
+    /// How many of the launch loads have finished, out of `bootUnits`. Drives the
+    /// splash's rule and the rising ticks that go with it.
+    @State private var bootDone = 0
+    /// False until every store this app opens with has answered. One flag for all
+    /// of them, because the alternative is what this replaced: the profile gating
+    /// a splash, then each tab arriving on screen empty and filling itself in.
+    @State private var isBooted = false
+
+    /// Profile, templates, companies. Named as a constant because the splash's
+    /// progress is a real fraction of these, not a timer dressed up as one.
+    private static let bootUnits = 3
+
+    /// The floor on how long the splash stays up. A warm launch can finish all
+    /// three loads in a couple of hundred milliseconds, and a launch screen that
+    /// appears and vanishes inside one is a flicker, not a screen.
+    private static let minimumSplash: Duration = .milliseconds(1_150)
+
+    /// How stale a check has to be before returning to the app runs another.
+    /// Without a floor, every glance at the home screen and back would spend a
+    /// request per outstanding thread.
+    private static let resyncAfter: TimeInterval = 15 * 60
 
     private enum Tab: Hashable { case home, companies, activity, templates, profile }
 
@@ -16,13 +47,10 @@ struct RootView: View {
         Group {
             if let email = gmailAuth.connectedEmail {
                 signedInContent
-                    // Load this user's profile on sign-in, and reload if the
-                    // connected account changes.
-                    .task(id: email) {
-                        jobStore.userEmail = email
-                        await profileStore.load(email: email)
-                        await templateStore.load(email: email)
-                    }
+                    // One launch, for the whole app. Re-runs if the connected
+                    // account changes, which is a new launch as far as the data
+                    // is concerned.
+                    .task(id: email) { await boot(email: email) }
             } else {
                 LoginView()
             }
@@ -32,6 +60,7 @@ struct RootView: View {
         .environment(templateStore)
         .environment(gmailAuth)
         .environment(mailQueue)
+        .environment(replySync)
         // Block interaction and show a loading state while a change is being
         // written to the database and reloaded, so the two never drift.
         .overlay {
@@ -40,13 +69,20 @@ struct RootView: View {
                     Color.black.opacity(0.15).ignoresSafeArea()
                     ProgressView("Saving…")
                         .padding(20)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                        .background(Color.paperRaised,
+                                    in: RoundedRectangle(cornerRadius: Theme.Radius.card,
+                                                         style: .continuous))
                 }
-                .transition(.opacity)
+                .popIn()
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: jobStore.isSaving)
-        .animation(.easeInOut(duration: 0.15), value: templateStore.isSaving)
+        .animation(Theme.Motion.bouncy, value: jobStore.isSaving)
+        .animation(Theme.Motion.bouncy, value: templateStore.isSaving)
+        // A failed write is the one thing on this screen the user has to act on,
+        // so it announces itself before the alert has finished animating in.
+        .sensoryFeedback(trigger: activeError != nil) { _, hasError in
+            hasError ? .error : nil
+        }
         // Surface any write/load failure from any tab. All three stores report
         // here: template and profile failures used to set an `errorMessage` that
         // no view was bound to, so a save that never reached the database looked
@@ -71,40 +107,95 @@ struct RootView: View {
         profileStore.clearError()
     }
 
-    /// Signed-in flow: wait for the profile to load, onboard first-time users,
-    /// then show the tabs (which load the user's companies).
+    /// Signed-in flow: hold the splash until everything has loaded, onboard
+    /// first-time users, then show the tabs — already populated.
     @ViewBuilder
     private var signedInContent: some View {
-        if !profileStore.loaded {
-            loadingSplash("Loading your profile…")
+        if !isBooted {
+            SplashView(progress: Double(bootDone) / Double(Self.bootUnits))
+                // Grows very slightly as it goes, so the app arrives from behind
+                // the splash rather than the splash sliding off the app.
+                .transition(.opacity.combined(with: .scale(scale: 1.04)))
         } else if !profileStore.hasProfile {
             OnboardingView()
+                .transition(.opacity)
         } else {
-            tabs.task {
-                connectMailQueue()
-                await jobStore.load()
-            }
+            tabs
+                .transition(.opacity)
+                // Replies arrive while the app is closed, so coming back is
+                // exactly when the answer on screen is most likely to be stale.
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active, !replySync.isSyncing else { return }
+                    let last = replySync.lastSyncedAt ?? .distantPast
+                    guard Date().timeIntervalSince(last) > Self.resyncAfter else { return }
+                    Task { await jobStore.syncReplies(using: replySync) }
+                }
         }
+    }
+
+    // MARK: - Launch
+
+    /// Load everything this account opens with, at once, behind the splash.
+    ///
+    /// The three loads are independent requests to two different services, so
+    /// they run concurrently: launch costs the slowest of them rather than their
+    /// sum. They used to run one after another *and* in two places — profile and
+    /// templates here, companies in the tabs' own task — which is why the app used
+    /// to appear before it had anything to show.
+    ///
+    /// Reply syncing is deliberately left out. It is a Gmail request per
+    /// outstanding thread, so it can run for seconds on a busy account; it starts
+    /// once the app is on screen and reports itself on Activity.
+    private func boot(email: String) async {
+        isBooted = false
+        bootDone = 0
+        jobStore.userEmail = email
+        connectMailQueue()
+
+        let started = ContinuousClock.now
+        async let profile: Void = load { await profileStore.load(email: email) }
+        async let templates: Void = load { await templateStore.load(email: email) }
+        async let companies: Void = load { await jobStore.load() }
+        _ = await (profile, templates, companies)
+
+        // Hold the floor from the moment the launch began, so a slow load spends
+        // none of it and a fast one still gets a whole screen rather than a blink.
+        let elapsed = ContinuousClock.now - started
+        if elapsed < Self.minimumSplash {
+            try? await Task.sleep(for: Self.minimumSplash - elapsed)
+        }
+
+        Haptics.success()
+        withAnimation(Theme.Motion.snappy) { isBooted = true }
+
+        await jobStore.syncReplies(using: replySync)
+    }
+
+    /// Run one launch load and mark it done: the rule advances a third, and the
+    /// phone ticks a little harder than it did for the one before. Three rising
+    /// taps and the success note at the end — the same shape as `Haptics.cascade`,
+    /// paced by the network instead of by a timer, so the launch is something you
+    /// can feel finishing without looking.
+    private func load(_ work: () async -> Void) async {
+        await work()
+        bootDone += 1
+        Haptics.tap(0.45 + 0.15 * CGFloat(bootDone))
     }
 
     /// Hand the queue the two things it deliberately doesn't own: how to deliver a
     /// mail, and what to do with the sends once a run finishes.
     private func connectMailQueue() {
         mailQueue.sender = { mail, fromName in
-            try await gmailAuth.send(to: mail.recipient, subject: mail.subject,
-                                     body: mail.body, fromName: fromName)
+            let message = try await gmailAuth.send(to: mail.recipient, subject: mail.subject,
+                                                   body: mail.body, fromName: fromName)
+            return message.map { MailQueue.Delivery(messageID: $0.id, threadID: $0.threadID) }
         }
         mailQueue.onCompletion = { records in
             await jobStore.markContactsSent(records)
         }
-    }
-
-    private func loadingSplash(_ message: String) -> some View {
-        VStack(spacing: 16) {
-            ProgressView()
-            Text(message).foregroundStyle(.secondary)
+        replySync.reader = { path, query in
+            try await gmailAuth.gmailGET(path: path, query: query)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// The accessory shelf is applied only while the queue has something to say.
@@ -115,10 +206,17 @@ struct RootView: View {
     /// to the first tab.
     @ViewBuilder
     private var tabs: some View {
-        if mailQueue.isActive {
-            tabStack.tabViewBottomAccessory { SendQueueBar() }
-        } else {
-            tabStack
+        Group {
+            if mailQueue.isActive {
+                tabStack.tabViewBottomAccessory { SendQueueBar() }
+            } else {
+                tabStack
+            }
+        }
+        // The shelf appearing pushes the tab bar up — a real object arriving on
+        // screen, and the one event here the user didn't just tap for.
+        .sensoryFeedback(trigger: mailQueue.isActive) { _, active in
+            active ? .impact(weight: .medium, intensity: 0.6) : nil
         }
     }
 
@@ -144,6 +242,7 @@ struct RootView: View {
                 .tabItem { Label("Profile", systemImage: "person") }
                 .tag(Tab.profile)
         }
+        .sensoryFeedback(.selection, trigger: selectedTab)
     }
 }
 

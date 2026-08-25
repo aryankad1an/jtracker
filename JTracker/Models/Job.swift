@@ -20,6 +20,12 @@ struct Contact: Identifiable, Decodable {
     var sentAt: Date?        // when it was sent
     var sentSubject: String? // the rendered subject that went out
     var sentBody: String?    // the rendered body that went out
+    /// Reply state for the latest send, overlaid from `mail_sends` alongside the
+    /// sent state above. Per-user for the same reason: whether a recruiter wrote
+    /// back is a fact about this user's mailbox, not about the shared contact.
+    var repliedAt: Date?
+    var replyFrom: String?
+    var replySnippet: String?
 
     enum CodingKeys: String, CodingKey {
         case id, email, name, phone, position
@@ -28,7 +34,8 @@ struct Contact: Identifiable, Decodable {
 
     init(id: String = "", email: String = "", name: String = "", phone: String? = nil,
          position: String = "", isValid: Bool = true, isSent: Bool = false, sentAt: Date? = nil,
-         sentSubject: String? = nil, sentBody: String? = nil) {
+         sentSubject: String? = nil, sentBody: String? = nil,
+         repliedAt: Date? = nil, replyFrom: String? = nil, replySnippet: String? = nil) {
         self.id = id
         self.email = email
         self.name = name
@@ -39,7 +46,13 @@ struct Contact: Identifiable, Decodable {
         self.sentAt = sentAt
         self.sentSubject = sentSubject
         self.sentBody = sentBody
+        self.repliedAt = repliedAt
+        self.replyFrom = replyFrom
+        self.replySnippet = replySnippet
     }
+
+    /// Whether this contact wrote back to the last mail we sent them.
+    var hasReplied: Bool { repliedAt != nil }
 
     /// Rows carry nulls for optional columns, so decode leniently and default.
     init(from decoder: Decoder) throws {
@@ -58,6 +71,11 @@ struct Contact: Identifiable, Decodable {
 struct SentMail {
     let subject: String
     let body: String
+    /// What Gmail called the message it just sent. `threadID` is the handle reply
+    /// detection is built on — every reply lands in the same thread, whoever sends
+    /// it — so it's captured at send time rather than searched for afterwards.
+    var gmailMessageID: String?
+    var gmailThreadID: String?
 }
 
 /// One entry in the Activity feed: a single mail the user sent, with the
@@ -107,4 +125,28 @@ struct Job: Identifiable, Decodable {
     /// screen shows them as two groups and only ever mails the first.
     var validContacts: [Contact] { contacts.filter(\.isValid) }
     var invalidContacts: [Contact] { contacts.filter { !$0.isValid } }
+
+    /// Contacts at this company who wrote back, and the ones still silent after
+    /// being mailed. Both drive Insights; neither counts anyone never mailed.
+    var repliedContacts: [Contact] { contacts.filter(\.hasReplied) }
+    var awaitingContacts: [Contact] { contacts.filter { $0.isSent && !$0.hasReplied } }
+
+    /// Whether this company answers a search box. Matching runs over the people
+    /// inside as well as the company itself, so a half-remembered recruiter's name
+    /// finds the company you'd have to have remembered to find them — the same
+    /// predicate on Home and in the catalog, so a query that works on one screen
+    /// works on the other.
+    ///
+    /// `query` is expected to be already trimmed; an empty one matches nothing,
+    /// because "no query" is a decision for the caller, not for a filter.
+    func matches(_ query: String) -> Bool {
+        guard !query.isEmpty else { return false }
+        if company.localizedCaseInsensitiveContains(query) { return true }
+        if sector?.localizedCaseInsensitiveContains(query) == true { return true }
+        return contacts.contains { contact in
+            contact.name.localizedCaseInsensitiveContains(query)
+                || contact.email.localizedCaseInsensitiveContains(query)
+                || contact.position.localizedCaseInsensitiveContains(query)
+        }
+    }
 }

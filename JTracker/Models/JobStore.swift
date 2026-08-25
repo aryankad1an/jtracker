@@ -12,13 +12,18 @@ final class JobStore {
     /// "Tracking" section.
     private(set) var jobs: [Job] = []
     /// Every company in the shared catalog, with recruiters and this user's sent
-    /// state overlaid. Drives the Companies list and Home's cross-company
-    /// "Suggested" section.
+    /// state overlaid. Drives the Companies list and the cross-company lanes of
+    /// Insights.
     private(set) var allCompanies: [Job] = []
     /// The Activity feed: every recruiter the user has sent to, newest first.
     /// Loaded from the send history, so it's independent of which companies are
     /// currently tracked on Home.
     private(set) var activity: [ActivityEntry] = []
+    /// This user's raw send rows, kept so reply syncing can work out which sends
+    /// still need a thread id or a reply check.
+    private(set) var sends: [MailSend] = []
+    /// Everything Home's Insights screen shows, rebuilt at the end of each load.
+    private(set) var insights = Insights()
 
     private(set) var isLoading = false
     var errorMessage: String?
@@ -98,7 +103,7 @@ final class JobStore {
 
     /// Contacts across every company that can be cold-mailed (well-formed address,
     /// not marked invalid) and haven't been mailed in the last month — never-sent
-    /// first, then oldest sent. Powers Home's "Suggested" section.
+    /// first, then oldest sent. Powers the "New" lane of Insights.
     var suggestedContacts: [(company: Job, contact: Contact)] {
         let cutoff = Date().addingTimeInterval(-30 * 24 * 60 * 60)
         var result: [(company: Job, contact: Contact)] = []
@@ -122,6 +127,7 @@ final class JobStore {
 
     /// `suggestedContacts` grouped by company, preserving the flat list's urgency
     /// order (a company appears at the position of its most-overdue contact).
+    /// Each group is one tap from a batch send in Insights.
     var suggestedGroups: [(company: Job, contacts: [Contact])] {
         var order: [String] = []
         var byID: [String: (company: Job, contacts: [Contact])] = [:]
@@ -149,6 +155,25 @@ final class JobStore {
             report(error)
         }
         isLoading = false
+    }
+
+    /// Ask Gmail what came back, then reload only if it found something.
+    ///
+    /// The reload is conditional because a sync that turns up nothing new has
+    /// nothing to show, and refetching the whole catalog would flash every screen
+    /// for no reason.
+    func syncReplies(using sync: ReplySync) async {
+        let outcome = await sync.run(sends: sends, emailByRecruiter: emailByRecruiter)
+        guard outcome.changedAnything else { return }
+        // Deliberately not `load()`: that one no-ops while another load is in
+        // flight, and this is the reload that carries the replies the sync has
+        // just written. Dropping it left an answer sitting in the database with
+        // nothing on screen to show for it until the next launch.
+        do {
+            try await reloadAll()
+        } catch {
+            report(error)
+        }
     }
 
     // MARK: - Tracking (home selection, syncs per account)
@@ -265,10 +290,7 @@ final class JobStore {
     func markContactsSent(_ records: [Contact.ID: SentMail]) async {
         guard !records.isEmpty, let email = userEmail else { return }
         do {
-            let now = Date()
-            for (id, mail) in records {
-                try await SupabaseAPI.recordSend(userEmail: email, recruiterID: id, mail: mail, at: now)
-            }
+            try await SupabaseAPI.recordSends(userEmail: email, records: records, at: Date())
             try await reloadAll()
         } catch {
             report(error)
@@ -280,7 +302,10 @@ final class JobStore {
     /// Fetch this user's tracked companies and the full catalog, overlay their
     /// sent records, and rebuild the Activity feed.
     private func reloadAll() async throws {
-        guard let email = userEmail else { jobs = []; allCompanies = []; activity = []; return }
+        guard let email = userEmail else {
+            jobs = []; allCompanies = []; activity = []; sends = []; insights = Insights()
+            return
+        }
 
         // One-time per account: lift any pre-sync, on-device selection up to the
         // server so it isn't lost now that the server owns Home membership.
@@ -303,6 +328,7 @@ final class JobStore {
         // Overlay the same per-user sent state onto both the tracked list and the
         // full catalog.
         let sends = try await SupabaseAPI.fetchSends(userEmail: email)
+        self.sends = sends
         let byRecruiter = Dictionary(sends.map { ($0.recruiterID, $0) }, uniquingKeysWith: { latest, _ in latest })
         overlaySends(byRecruiter, into: &companies)
         overlaySends(byRecruiter, into: &all)
@@ -321,6 +347,8 @@ final class JobStore {
                 case (nil, nil): return a.company.localizedCaseInsensitiveCompare(b.company) == .orderedAscending
                 }
             }
+
+        insights = Insights.make(activity: activity, catalog: all)
     }
 
     /// Overlay this user's per-recruiter sent state onto a set of companies.
@@ -332,8 +360,23 @@ final class JobStore {
                 companies[j].contacts[c].sentAt = send.sentAt
                 companies[j].contacts[c].sentSubject = send.subject
                 companies[j].contacts[c].sentBody = send.body
+                companies[j].contacts[c].repliedAt = send.repliedAt
+                companies[j].contacts[c].replyFrom = send.replyFrom
+                companies[j].contacts[c].replySnippet = send.replySnippet
             }
         }
+    }
+
+    /// Where each recruiter's mail was addressed, for recovering the thread id of
+    /// a send made before the app captured one.
+    var emailByRecruiter: [String: String] {
+        var result: [String: String] = [:]
+        for company in allCompanies {
+            for contact in company.contacts where !contact.email.isEmpty {
+                result[contact.id] = contact.email
+            }
+        }
+        return result
     }
 
     /// Run a write, then refresh from the database so local state stays in sync.

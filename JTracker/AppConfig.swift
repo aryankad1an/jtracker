@@ -22,7 +22,19 @@ enum AppConfig {
     /// Full redirect URI handed to Google and matched on the callback.
     static var googleRedirectURI: String { "\(googleRedirectScheme):/oauth2redirect" }
 
-    /// Requested scopes: identify the account (openid/email) and allow sending
-    /// mail on the user's behalf later.
-    static let googleScopes = "openid email https://www.googleapis.com/auth/gmail.send"
+    /// Requested scopes: identify the account (openid/email), send mail on the
+    /// user's behalf, and read it back.
+    ///
+    /// `gmail.readonly` is what reply tracking runs on — it needs the `q` search
+    /// parameter (to find a send's thread) and the message headers in a thread (to
+    /// see who answered), and the narrower `gmail.metadata` scope allows neither.
+    /// It's a restricted scope, so a published app needs Google's verification;
+    /// while the OAuth consent screen is in Testing it works for the listed test
+    /// users as-is. Adding it invalidates existing consent: reconnect Gmail from
+    /// Profile once after updating, or Gmail reads fail with a 403.
+    static let googleScopes = """
+        openid email \
+        https://www.googleapis.com/auth/gmail.send \
+        https://www.googleapis.com/auth/gmail.readonly
+        """
 }

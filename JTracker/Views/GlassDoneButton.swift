@@ -9,11 +9,13 @@ struct GlassDoneButton: View {
         Button(action: action) {
             Text("Done")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(.ink)
                 .padding(.horizontal, 16)
                 .frame(height: 34)
                 .glassEffect(.regular.interactive(), in: .capsule)
         }
-        .buttonStyle(.plain)
+        // Glass already reacts to a touch; the dip and the knock are what say the
+        // tap registered rather than merely landed.
+        .buttonStyle(BouncyPress(scale: 0.92))
     }
 }

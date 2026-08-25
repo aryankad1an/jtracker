@@ -63,8 +63,28 @@ final class GmailAuthStore: NSObject, ASWebAuthenticationPresentationContextProv
 
     // MARK: - Sending
 
-    /// Send a plain-text email from the connected account via the Gmail API.
-    func send(to recipient: String, subject: String, body: String, fromName: String) async throws {
+    /// Identifies a message Gmail accepted. The thread is the durable half: a
+    /// reply keeps the thread id and gets a new message id, so reply detection
+    /// keys on `threadID`.
+    struct SentMessage: Decodable {
+        let id: String
+        let threadID: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case threadID = "threadId"
+        }
+    }
+
+    /// Send a plain-text email from the connected account via the Gmail API, and
+    /// return the ids Gmail assigned it.
+    /// Returns nil when Gmail accepted the mail but its response couldn't be
+    /// parsed: the mail is still sent, we just don't know its ids. Reporting that
+    /// as a failure would be far worse than losing the ids — the queue would list
+    /// it as unsent and offer to mail the person again. The recovery pass in
+    /// `ReplySync` can find the thread later anyway.
+    @discardableResult
+    func send(to recipient: String, subject: String, body: String, fromName: String) async throws -> SentMessage? {
         let token = try await accessToken()
         let raw = Self.mimeMessage(
             from: connectedEmail ?? "", fromName: fromName,
@@ -79,8 +99,47 @@ final class GmailAuthStore: NSObject, ASWebAuthenticationPresentationContextProv
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            // Deliberately not routed through `error(status:…)`: a 403 here is a
+            // quota or policy refusal, not the missing read scope, and offering
+            // "reconnect to read your mail" would send the user somewhere useless.
             throw GmailAuthError.server(String(data: data, encoding: .utf8) ?? "Send failed.")
         }
+        return try? JSONDecoder().decode(SentMessage.self, from: data)
+    }
+
+    /// Run an authorized GET against the Gmail API and hand back the raw body.
+    ///
+    /// Reply syncing needs to read the mailbox, but it has no business holding a
+    /// token: this exposes the *capability* while the refresh token and its
+    /// short-lived access token stay inside this type.
+    func gmailGET(path: String, query: [URLQueryItem]) async throws -> Data {
+        let token = try await accessToken()
+        var components = URLComponents(string: "https://gmail.googleapis.com/gmail/v1/users/me/\(path)")!
+        if !query.isEmpty { components.queryItems = query }
+
+        var request = URLRequest(url: components.url!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            throw Self.error(status: status, data: data, fallback: "Gmail request failed.")
+        }
+        return data
+    }
+
+    /// Translate a Gmail *read* failure into something a person can act on. A
+    /// token minted before reply tracking existed is missing the read scope, and
+    /// Google says so with a 403 that reads like a bug — it isn't, it just needs
+    /// reconnecting, which is the one thing the message should say.
+    private static func error(status: Int, data: Data, fallback: String) -> GmailAuthError {
+        let body = String(data: data, encoding: .utf8) ?? fallback
+        if status == 401 || status == 403,
+           body.contains("insufficient") || body.contains("Insufficient")
+               || body.contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT") {
+            return .insufficientScope
+        }
+        return .server(body)
     }
 
     /// Trade the stored refresh token for a short-lived access token.
@@ -245,6 +304,7 @@ enum GmailAuthError: LocalizedError {
     case cancelled
     case invalidResponse
     case notConnected
+    case insufficientScope
     case server(String)
 
     var errorDescription: String? {
@@ -252,6 +312,8 @@ enum GmailAuthError: LocalizedError {
         case .cancelled: return "Sign-in was cancelled."
         case .invalidResponse: return "Unexpected response from Google."
         case .notConnected: return "Connect Gmail in Profile first."
+        case .insufficientScope:
+            return "Reply tracking needs permission to read your mail. Reconnect Gmail in Profile to grant it."
         case .server(let message): return message
         }
     }

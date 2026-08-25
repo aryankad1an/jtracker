@@ -107,6 +107,7 @@ struct TemplateEditorView: View {
                 case .preview: previewPane
                 }
             }
+            .background(Color.paper)
             .navigationTitle(existing == nil ? "New Template" : "Edit Template")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
@@ -130,17 +131,25 @@ struct TemplateEditorView: View {
             } message: {
                 Text(testSendResult ?? "")
             }
+            // A test send goes out to Gmail and back; the result lands after the
+            // user has stopped watching the button.
+            .sensoryFeedback(trigger: testSendResult != nil) { _, landed in
+                landed ? .success : nil
+            }
+            // Preview re-renders whenever the sample or the text changes, and the
+            // pane it swaps into is a different height.
+            .animation(Theme.Motion.bouncy, value: mode)
+            .animation(Theme.Motion.bouncy, value: showingIssues)
         }
     }
 
     private var modePicker: some View {
-        Picker("Mode", selection: $mode) {
-            Text("Write").tag(Mode.write)
-            Text("Preview").tag(Mode.preview)
-        }
-        .pickerStyle(.segmented)
-        .padding(.horizontal)
-        .padding(.bottom, 10)
+        SegmentedSelector(segments: [
+            (Mode.write, "Write", "square.and.pencil"),
+            (Mode.preview, "Preview", "eye")
+        ], selection: $mode)
+            .padding(.horizontal)
+            .padding(.bottom, 10)
     }
 
     @ToolbarContentBuilder
@@ -154,7 +163,15 @@ struct TemplateEditorView: View {
         // at the render, then mail it to yourself.
         ToolbarItem(placement: .confirmationAction) {
             Button("Save") {
-                if errorCount > 0 { confirmingSaveWithErrors = true } else { commit() }
+                if errorCount > 0 {
+                    // Saving over unresolved issues opens a dialog rather than a
+                    // save, and it should feel like a stop rather than a commit.
+                    Haptics.warning()
+                    confirmingSaveWithErrors = true
+                } else {
+                    Haptics.success()
+                    commit()
+                }
             }
             .disabled(!isValid)
         }
@@ -187,8 +204,7 @@ struct TemplateEditorView: View {
                         .lineLimit(1...4)
                 }
             }
-            .background(Color(.secondarySystemBackground),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .panel()
             .padding(.horizontal)
             .padding(.top, 12)
 
@@ -201,7 +217,7 @@ struct TemplateEditorView: View {
                     if content.isEmpty {
                         Text("Write your mail. Tap a placeholder below the keyboard to drop in a name, company, or your resume link.")
                             .font(.callout)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.inkFaint)
                             .padding(.horizontal, 17)
                             .padding(.top, 8)
                             .allowsHitTesting(false)
@@ -223,7 +239,7 @@ struct TemplateEditorView: View {
                 .font(.caption2.weight(.semibold))
                 .textCase(.uppercase)
                 .tracking(0.5)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.inkMuted)
             field()
                 .font(.subheadline)
         }
@@ -239,6 +255,10 @@ struct TemplateEditorView: View {
                 HStack(spacing: 6) {
                     ForEach(MailPlaceholder.allCases) { placeholder in
                         Button {
+                            // A placeholder lands in text the user can't see the
+                            // caret of while the keyboard is up, so the knock is
+                            // the confirmation that it went in.
+                            Haptics.tap()
                             insert(placeholder.token)
                         } label: {
                             Text(placeholder.shortLabel)
@@ -248,7 +268,7 @@ struct TemplateEditorView: View {
                                 .background(Color.accentColor.opacity(0.14), in: Capsule())
                                 .foregroundStyle(.tint)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(BouncyPress(scale: 0.9))
                     }
                 }
             }
@@ -277,7 +297,7 @@ struct TemplateEditorView: View {
                                 .lineLimit(1)
                             Text(sample.contact.email)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.inkMuted)
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
@@ -288,7 +308,7 @@ struct TemplateEditorView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("SUBJECT")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.inkMuted)
                         Text(rendered(subject))
                             .font(.subheadline.weight(.semibold))
                     }
@@ -296,15 +316,14 @@ struct TemplateEditorView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("MESSAGE")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.inkMuted)
                         Text(rendered(content))
                             .font(.callout)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding()
-                .background(Color(.secondarySystemBackground),
-                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .panel(radius: Theme.Radius.hero)
 
                 legend
                 testSendButton
@@ -319,6 +338,7 @@ struct TemplateEditorView: View {
     private var testSendButton: some View {
         VStack(spacing: 6) {
             Button {
+                Haptics.press()
                 confirmingTestSend = true
             } label: {
                 HStack(spacing: 6) {
@@ -340,7 +360,7 @@ struct TemplateEditorView: View {
                  ? "Goes to your own inbox — the only way to see how it really lands."
                  : "Connect Gmail in Profile to send a test.")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.inkMuted)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
         }
@@ -351,6 +371,7 @@ struct TemplateEditorView: View {
         Menu {
             ForEach(allContacts, id: \.contact.id) { item in
                 Button {
+                    Haptics.select()
                     sampleContactID = item.contact.id
                 } label: {
                     Text("\(displayName(item.contact)) · \(item.company)")
@@ -385,16 +406,16 @@ struct TemplateEditorView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 legendItem(color: .accentColor, text: "Filled in")
-                legendItem(color: .red, text: "Blank or not a placeholder")
+                legendItem(color: .danger, text: "Blank or not a placeholder")
                 Spacer(minLength: 0)
             }
             VStack(alignment: .leading, spacing: 5) {
                 legendItem(color: .accentColor, text: "Filled in")
-                legendItem(color: .red, text: "Blank or not a placeholder")
+                legendItem(color: .danger, text: "Blank or not a placeholder")
             }
         }
         .font(.caption2)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.inkMuted)
     }
 
     private func legendItem(color: Color, text: String) -> some View {
@@ -446,8 +467,8 @@ struct TemplateEditorView: View {
 
     private func marker(_ text: String) -> AttributedString {
         var chunk = AttributedString(text)
-        chunk.backgroundColor = .red.opacity(0.18)
-        chunk.foregroundColor = .red
+        chunk.backgroundColor = .danger.opacity(0.18)
+        chunk.foregroundColor = .danger
         return chunk
     }
 
@@ -462,18 +483,19 @@ struct TemplateEditorView: View {
         if !findings.isEmpty {
             VStack(spacing: 0) {
                 Button {
-                    withAnimation(.snappy(duration: 0.25)) { showingIssues.toggle() }
+                    Haptics.tap()
+                    withAnimation(Theme.Motion.bouncy) { showingIssues.toggle() }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: statusIcon)
                             .foregroundStyle(statusColor)
                         Text(statusText)
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.ink)
                         Spacer(minLength: 4)
                         Image(systemName: "chevron.down")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.inkMuted)
                             .rotationEffect(.degrees(showingIssues ? 180 : 0))
                     }
                     .padding(.horizontal, 16)
@@ -495,12 +517,13 @@ struct TemplateEditorView: View {
                         }
                     }
                     .frame(maxHeight: 210)
-                    .background(Color(.secondarySystemBackground))
+                    .background(Color.paperRaised)
                 }
 
                 Divider()
             }
-            .background(.bar)
+            .background(Color.paperRaised)
+            .overlay(alignment: .top) { Divider().overlay(Color.hairline) }
         }
     }
 
@@ -509,7 +532,7 @@ struct TemplateEditorView: View {
     }
 
     private var statusColor: Color {
-        errorCount > 0 ? .red : .orange
+        errorCount > 0 ? .danger : .kraft
     }
 
     private var statusText: String {
@@ -522,7 +545,7 @@ struct TemplateEditorView: View {
             Image(systemName: finding.severity == .error
                   ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
                 .font(.footnote)
-                .foregroundStyle(finding.severity == .error ? .red : .orange)
+                .foregroundStyle(finding.severity == .error ? Color.danger : Color.kraft)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -530,7 +553,7 @@ struct TemplateEditorView: View {
                     .font(.subheadline.weight(.semibold))
                 Text(finding.detail)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 

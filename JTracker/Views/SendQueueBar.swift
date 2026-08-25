@@ -22,17 +22,34 @@ struct SendQueueBar: View {
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
+                    .contentTransition(.numericText())
                 Text(subtitle)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.inkMuted)
                     .lineLimit(1)
+                    .contentTransition(.numericText())
             }
+            // "3 of 8" ticking up is the only motion on the shelf while a batch
+            // runs — animated, it reads as progress rather than as a redraw.
+            .animation(Theme.Motion.pop, value: queue.completed)
 
             Spacer(minLength: 4)
 
             trailingControl
         }
         .padding(.horizontal, 14)
+        // The result is the one thing on this shelf the user is waiting for, and
+        // by the time it lands they've usually navigated away from the screen
+        // they sent from. Two tones so the answer arrives before the words are
+        // read: the success chime for a clean run, the error buzz for a partial.
+        .sensoryFeedback(trigger: queue.outcome?.failed.isEmpty) { _, clean -> SensoryFeedback? in
+            switch clean {
+            case .some(true): return .success
+            case .some(false): return .error
+            case .none: return nil
+            }
+        }
+        .animation(Theme.Motion.bouncy, value: queue.isRunning)
         .task(id: queue.outcome?.failed.isEmpty) {
             // Only a fully successful run clears itself.
             guard let outcome = queue.outcome, outcome.failed.isEmpty else { return }
@@ -58,11 +75,16 @@ struct SendQueueBar: View {
                     .rotationEffect(.degrees(-90))
             }
             .frame(width: 21, height: 21)
-            .animation(.snappy(duration: 0.3), value: queue.progress)
+            .animation(Theme.Motion.settle, value: queue.progress)
+            .transition(.scale(scale: 0.5).combined(with: .opacity))
         } else if let outcome = queue.outcome {
             Image(systemName: outcome.failed.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .font(.title3)
                 .foregroundStyle(outcome.failed.isEmpty ? Color.statusDone : .orange)
+                // The tick replaces the progress ring in the same 21pt slot, so
+                // it springs in rather than swapping — the run visibly finishes.
+                .symbolEffect(.bounce, value: outcome.sent)
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
         }
     }
 
@@ -88,6 +110,8 @@ struct SendQueueBar: View {
     private var trailingControl: some View {
         if queue.isRunning {
             Button {
+                // Stopping a run mid-flight is the destructive control here.
+                Haptics.thud()
                 queue.cancel()
             } label: {
                 Text("Stop")
@@ -97,13 +121,14 @@ struct SendQueueBar: View {
             .controlSize(.small)
         } else if queue.outcome != nil {
             Button {
+                Haptics.tap(0.5)
                 queue.acknowledge()
             } label: {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.inkMuted)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(BouncyPress(scale: 0.8))
         }
     }
 }

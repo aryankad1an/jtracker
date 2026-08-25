@@ -18,9 +18,51 @@ struct MailSummaryView: View {
         contact.sentAt?.formatted(date: .abbreviated, time: .shortened)
     }
 
+    /// Full date + time of the reply, when there was one.
+    private var repliedStamp: String? {
+        contact.repliedAt?.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// How long they took to answer, in whole days.
+    private var turnaround: String? {
+        guard let sent = contact.sentAt, let replied = contact.repliedAt,
+              let days = Calendar.current.dateComponents([.day], from: sent, to: replied).day else {
+            return nil
+        }
+        return days == 0 ? "Same day" : "\(days) day\(days == 1 ? "" : "s")"
+    }
+
+    /// The answer, when one arrived. Only the opening lines are stored — enough to
+    /// recognise the reply and decide whether to open Gmail, without this app
+    /// keeping a copy of someone else's mail.
+    @ViewBuilder
+    private var replySection: some View {
+        if let repliedStamp {
+            Section {
+                LabeledContent("When", value: repliedStamp)
+                if let turnaround {
+                    LabeledContent("Turnaround", value: turnaround)
+                }
+                if let from = contact.replyFrom, !from.isEmpty {
+                    LabeledContent("From", value: from)
+                }
+                if let snippet = contact.replySnippet, !snippet.isEmpty {
+                    Text(snippet)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                }
+            } header: {
+                Label("Reply", systemImage: "arrowshape.turn.up.left.fill")
+                    .foregroundStyle(.statusDone)
+            } footer: {
+                Text("Detected in the Gmail thread this mail started. Open Gmail for the full message.")
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
-            List {
+            PaperList {
                 Section("To") {
                     LabeledContent("Name", value: recipientName)
                     if !contact.email.isEmpty {
@@ -35,6 +77,8 @@ struct MailSummaryView: View {
                 Section("Sent") {
                     LabeledContent("When", value: sentStamp ?? "Date not recorded")
                 }
+
+                replySection
 
                 if let subject = contact.sentSubject, !subject.isEmpty {
                     Section("Subject") {
@@ -51,7 +95,7 @@ struct MailSummaryView: View {
                 } else {
                     Section("Message") {
                         Text("Message content wasn't recorded for this mail.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.inkMuted)
                     }
                 }
             }
@@ -59,7 +103,10 @@ struct MailSummaryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        Haptics.tap(0.5)
+                        dismiss()
+                    }
                 }
             }
         }
