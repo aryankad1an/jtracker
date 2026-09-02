@@ -22,6 +22,7 @@ struct ContactDetailView: View {
     @State private var name: String
     @State private var phone: String
     @State private var position: String
+    @State private var greetingName: String
     /// The last-saved values, so Cancel reverts correctly even after a save.
     @State private var committed: Contact
     /// Mirrors the contact's shared valid/invalid flag so the sheet updates the
@@ -43,6 +44,7 @@ struct ContactDetailView: View {
         _name = State(initialValue: contact.name)
         _phone = State(initialValue: contact.phone ?? "")
         _position = State(initialValue: contact.position)
+        _greetingName = State(initialValue: contact.greetingName ?? "")
         _committed = State(initialValue: contact)
         _isContactValid = State(initialValue: contact.isValid)
     }
@@ -59,7 +61,7 @@ struct ContactDetailView: View {
                 if !isContactValid { invalidBanner }
 
                 RecruiterFields(email: $email, name: $name, position: $position, phone: $phone,
-                                isEditing: isEditing, header: company)
+                                greetingName: $greetingName, isEditing: isEditing, header: company)
 
                 validitySection
 
@@ -202,7 +204,8 @@ struct ContactDetailView: View {
     /// A contact carrying this specific send's mail, for the summary drawer.
     private func contact(for send: MailSend) -> Contact {
         var c = Contact(id: contact.id, email: email, name: name,
-                        phone: phone.isEmpty ? nil : phone, position: position)
+                        phone: phone.isEmpty ? nil : phone, position: position,
+                        greetingName: greetingName.isEmpty ? nil : greetingName)
         c.sentAt = send.sentAt
         c.sentSubject = send.subject
         c.sentBody = send.body
@@ -214,6 +217,7 @@ struct ContactDetailView: View {
         name = committed.name
         phone = committed.phone ?? ""
         position = committed.position
+        greetingName = committed.greetingName ?? ""
         isEditing = false
     }
 
@@ -230,6 +234,7 @@ struct ContactDetailView: View {
             name: name,
             phone: phone.isEmpty ? nil : phone,
             position: position,
+            greetingName: greetingName.isEmpty ? nil : greetingName,
             isValid: isContactValid
         )
         committed = updated

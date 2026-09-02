@@ -276,7 +276,7 @@ struct CompaniesView: View {
 /// A company card in the Companies list: monogram, name, an optional sector, a
 /// pin when tracked, and a fixed-size contacts-count pill that never truncates.
 /// A reply chip appears once anyone here has written back, so the catalog carries
-/// the same outreach state Home and Insights do.
+/// the same outreach state Home and Quick Actions do.
 private struct CompanyRow: View {
     let job: Job
     let isTracked: Bool

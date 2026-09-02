@@ -1,7 +1,7 @@
 import Foundation
 
-/// Everything the Insights screen shows, computed once per load rather than
-/// re-derived inside a view body.
+/// Everything Quick Actions and Home's summary card show, computed once per
+/// load rather than re-derived inside a view body.
 ///
 /// It's built from the Activity feed (one entry per *send*) instead of from the
 /// company catalog, for the same reason Activity is: outreach history has to
@@ -47,6 +47,29 @@ struct Insights {
         }
     }
 
+    /// One unanswered mail, kept per *person* rather than per send: the last
+    /// thing you wrote them and how long it has been quiet since. The Waiting
+    /// lane of Quick Actions lists these, filters them by age, and mails a
+    /// follow-up to whichever ones are ticked — so a recruiter mailed twice is
+    /// one row and one follow-up, not two.
+    struct WaitingMail: Identifiable {
+        let contact: Contact
+        let company: String
+        /// nil once the company has left the catalog — the send history keeps the
+        /// name, but there is nothing left to navigate to.
+        let companyID: String?
+        let sentAt: Date?
+        /// Whole days of silence. What the lane sorts and filters on.
+        let days: Int
+
+        var id: Contact.ID { contact.id }
+
+        /// A follow-up can only go to a live address. Bounced and ruled-out
+        /// contacts still appear — the silence is real and worth seeing — but
+        /// they are never ticked and never sent.
+        var isMailable: Bool { contact.isValid && contact.email.contains("@") }
+    }
+
     var companies: [CompanyStat] = []
 
     /// Companies that have heard from you and said nothing back, longest silence
@@ -64,6 +87,9 @@ struct Insights {
     var unanswered: [ActivityEntry] = []
     /// Everyone who wrote back, most recent reply first.
     var replies: [ActivityEntry] = []
+    /// The unanswered sends collapsed to one row per person, longest silence
+    /// first — the follow-up queue, ready to be filtered by age.
+    var waitingMails: [WaitingMail] = []
 
     var replyRate: Double {
         totalSent == 0 ? 0 : Double(totalReplies) / Double(totalSent)
@@ -73,8 +99,11 @@ struct Insights {
     /// mean, so one recruiter who answered six weeks later doesn't move it.
     var medianResponseDays: Int?
 
-    /// The longest anyone has been left hanging, in days.
-    var longestSilenceDays: Int? { waitingOn.first?.daysWaiting }
+    /// The longest anyone has been left hanging, in days. Read off the person
+    /// queue rather than the company one, so it means the same thing Quick
+    /// Actions' first row does — a company with one reply and three silences
+    /// isn't "answered" as far as those three people are concerned.
+    var longestSilenceDays: Int? { waitingMails.first?.days }
 
     // MARK: - Building
 
@@ -111,6 +140,27 @@ struct Insights {
         insights.responded = insights.companies
             .filter { !$0.isSilent }
             .sorted { ($0.lastReplyAt ?? .distantPast) > ($1.lastReplyAt ?? .distantPast) }
+
+        // One row per person, carrying their most recent unanswered send. The
+        // feed holds a row per send, and a follow-up queue that lists the same
+        // recruiter three times is three mails to the same inbox.
+        var latestByContact: [Contact.ID: ActivityEntry] = [:]
+        for entry in insights.unanswered {
+            let held = latestByContact[entry.contact.id]
+            if held == nil || (entry.date ?? .distantPast) > (held?.date ?? .distantPast) {
+                latestByContact[entry.contact.id] = entry
+            }
+        }
+        insights.waitingMails = latestByContact.values
+            .map { entry in
+                let days = entry.date.map {
+                    Calendar.current.dateComponents([.day], from: $0, to: .now).day ?? 0
+                } ?? 0
+                return WaitingMail(contact: entry.contact, company: entry.company,
+                                   companyID: idByName[entry.company], sentAt: entry.date,
+                                   days: days)
+            }
+            .sorted { ($0.sentAt ?? .distantPast) < ($1.sentAt ?? .distantPast) }
 
         let waits = insights.replies.compactMap { entry -> Int? in
             guard let sent = entry.date, let replied = entry.contact.repliedAt else { return nil }

@@ -2,11 +2,12 @@ import SwiftUI
 
 /// The Home tab: what came back, then what you're tracking.
 ///
-/// It opens on an Insights card — the campaign scored in one glance, tapping
-/// through to the full breakdown — because the first question on opening the app
-/// is "did anyone answer?", not "which companies am I tracking?". The tracked
-/// companies follow, each carrying its own reply/waiting state so the answer to
-/// that first question is legible without leaving the screen.
+/// It opens on the Quick Actions card — the campaign scored in one glance,
+/// tapping through to the follow-up, reply and reach-out lanes — because the
+/// first question on opening the app is "did anyone answer?", not "which
+/// companies am I tracking?". The tracked companies follow, each carrying its
+/// own reply/waiting state so the answer to that first question is legible
+/// without leaving the screen.
 ///
 /// Rows are `List` rows with cleared backgrounds rather than a `ScrollView` of
 /// cards, so swipe-to-untrack keeps working while the cards get their own shape.
@@ -14,7 +15,7 @@ struct HomeView: View {
     @Environment(JobStore.self) private var jobStore
     @Environment(ReplySync.self) private var replySync
 
-    @State private var showingInsights = false
+    @State private var showingQuickActions = false
     /// Drives navigation to a tracked company's detail. Rows are plain `Button`s
     /// (not `NavigationLink`) so the card fills the row without the system's
     /// chevron and inset.
@@ -54,8 +55,8 @@ struct HomeView: View {
                         // for, and it would push the first result off the screen.
                         if !isSearching {
                             Section {
-                                Button { showingInsights = true } label: {
-                                    InsightsCard(insights: insights, isSyncing: replySync.isSyncing)
+                                Button { showingQuickActions = true } label: {
+                                    QuickActionsCard(insights: insights, isSyncing: replySync.isSyncing)
                                 }
                                 .cardButtonStyle()
                                 .listRowInsets(EdgeInsets(top: 6, leading: Theme.Space.gutter,
@@ -95,8 +96,8 @@ struct HomeView: View {
             .safeAreaInset(edge: .bottom) {
                 if !undoJobs.isEmpty { undoBar }
             }
-            .sheet(isPresented: $showingInsights) {
-                InsightsView()
+            .sheet(isPresented: $showingQuickActions) {
+                QuickActionsView()
             }
         }
     }
@@ -210,11 +211,12 @@ struct HomeView: View {
     }
 }
 
-// MARK: - Insights card
+// MARK: - Quick Actions card
 
 /// Home's headline: the reply rate as a ring, with the two counts that decide
-/// what to do next. Tapping opens the full Insights screen.
-private struct InsightsCard: View {
+/// what to do next. Tapping opens Quick Actions, where those counts become
+/// lists you can tick and send.
+private struct QuickActionsCard: View {
     let insights: Insights
     let isSyncing: Bool
 
@@ -223,7 +225,8 @@ private struct InsightsCard: View {
     private var subtitle: String {
         if insights.totalSent == 0 { return "Send your first mail to start tracking" }
         if let longest = insights.longestSilenceDays, longest > 0 {
-            return "Longest silence \(longest)d · \(insights.waitingOn.count) compan\(insights.waitingOn.count == 1 ? "y" : "ies")"
+            let waiting = insights.waitingMails.count
+            return "Longest silence \(longest)d · \(waiting) awaiting a reply"
         }
         return "\(insights.totalSent) mails tracked"
     }
@@ -249,7 +252,7 @@ private struct InsightsCard: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Text("Insights")
+                    Text("Quick Actions")
                         .font(.display(19))
                         .foregroundStyle(.ink)
                     if isSyncing {
@@ -259,7 +262,7 @@ private struct InsightsCard: View {
 
                 HStack(spacing: 8) {
                     countChip(insights.totalReplies, "replied", .statusDone)
-                    countChip(insights.unanswered.count, "waiting", .statusWaiting)
+                    countChip(insights.waitingMails.count, "waiting", .statusWaiting)
                 }
 
                 Text(subtitle)

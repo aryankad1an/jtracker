@@ -9,9 +9,14 @@ enum SupabaseAPI {
     /// Every company in the shared catalog, each with its recruiters and sector.
     /// A left join, so companies with no recruiters are included too — the
     /// Companies list decides whether to show them. Sorted by name.
+    ///
+    /// The recruiter columns are selected with `*` rather than by name for the
+    /// same reason `fetchSends` does it: naming a column PostgREST doesn't have
+    /// yet fails the whole request, and `greeting_name` only exists once the
+    /// migration in the README has been run.
     static func fetchAllCompanies() async throws -> [Job] {
         let request = makeRequest(path: "companies", query: [
-            URLQueryItem(name: "select", value: "id,name,sector,recruiters(id,name,email,position,phone,is_valid)"),
+            URLQueryItem(name: "select", value: "id,name,sector,recruiters(*)"),
             URLQueryItem(name: "order", value: "name")
         ])
         let data = try await send(request)
@@ -26,7 +31,7 @@ enum SupabaseAPI {
     /// a single round trip. Sorted by name here since the join order isn't stable.
     static func fetchTrackedCompanies(userEmail: String) async throws -> [Job] {
         let request = makeRequest(path: "tracked_companies", query: [
-            URLQueryItem(name: "select", value: "companies(id,name,recruiters(id,name,email,position,phone,is_valid))"),
+            URLQueryItem(name: "select", value: "companies(id,name,recruiters(*))"),
             URLQueryItem(name: "user_email", value: "eq.\(userEmail)")
         ])
         let data = try await send(request)
@@ -167,14 +172,38 @@ enum SupabaseAPI {
     static func addRecruiter(companyID: String, contact: Contact) async throws -> String {
         var body = recruiterBody(contact)
         body["company_id"] = companyID
-        return try await insertReturningID(path: "recruiters", body: body,
-                                           onConflict: "company_id,email")
+        do {
+            return try await insertReturningID(path: "recruiters", body: body,
+                                               onConflict: "company_id,email")
+        } catch SupabaseError.schemaOutOfDate {
+            return try await insertReturningID(path: "recruiters",
+                                               body: withoutGreetingName(body),
+                                               onConflict: "company_id,email")
+        }
     }
 
     static func updateRecruiter(_ contact: Contact) async throws {
-        try await write(method: "PATCH", path: "recruiters",
-                        query: [URLQueryItem(name: "id", value: "eq.\(contact.id)")],
-                        body: recruiterBody(contact))
+        let query = [URLQueryItem(name: "id", value: "eq.\(contact.id)")]
+        do {
+            try await write(method: "PATCH", path: "recruiters", query: query,
+                            body: recruiterBody(contact))
+        } catch SupabaseError.schemaOutOfDate {
+            greetingColumnMissing = true
+            try await write(method: "PATCH", path: "recruiters", query: query,
+                            body: withoutGreetingName(recruiterBody(contact)))
+        }
+    }
+
+    /// Set once a write comes back reporting `greeting_name` doesn't exist. The
+    /// rest of the row is saved regardless — losing a whole contact edit over an
+    /// optional greeting override would be the worse trade — and the greeting
+    /// falls back to what `RecipientName` derives, as it did before the column.
+    private(set) static var greetingColumnMissing = false
+
+    private static func withoutGreetingName(_ body: [String: Any]) -> [String: Any] {
+        var body = body
+        body["greeting_name"] = nil
+        return body
     }
 
     /// Flag recruiters valid or invalid in the shared catalog — the whole set in
@@ -329,7 +358,8 @@ enum SupabaseAPI {
             "name": value(contact.name),
             "email": value(contact.email),
             "position": value(contact.position),
-            "phone": value(contact.phone)
+            "phone": value(contact.phone),
+            "greeting_name": value(contact.greetingName)
         ]
     }
 

@@ -26,10 +26,12 @@ Google (Gmail) OAuth for sending mail.
   every user, since a dead address is dead for everyone.
 - **Reply tracking** — every send records the Gmail thread it started, and the
   app reads those threads back to see who answered. Replies show up in Activity
-  and drive Insights.
-- **Insights** — Home's headline: reply rate, who has gone quiet longest,
-  who answered (with the first lines of what they said), every unanswered mail
-  by company, and who hasn't been contacted yet.
+  and drive Quick Actions.
+- **Quick Actions** — Home's headline, and the screen you act from: reply rate
+  and counts across the top, then three lanes you can tick and batch-send from —
+  everyone still waiting (filtered by how many days they've been quiet), everyone
+  who answered (with the first lines of what they said), and everyone who hasn't
+  been contacted yet.
 
 ## Architecture
 
@@ -107,6 +109,12 @@ Schema changes the app expects, newest first. Run them in the Supabase SQL
 editor; each is safe to re-run.
 
 ```sql
+-- Per-contact greeting override: what goes after "Hi " when the name field
+-- can't produce it on its own ("A Bagarwal", a role mailbox). Null derives the
+-- greeting from the name and address instead.
+alter table recruiters
+  add column if not exists greeting_name text;
+
 -- Reply tracking. Gmail's ids for each send, and what came back.
 alter table mail_sends
   add column if not exists gmail_message_id text,
@@ -123,9 +131,13 @@ alter table recruiters
   add column if not exists is_valid boolean not null default true;
 ```
 
-Until the first block is applied the app still runs — sends are recorded without
-their Gmail ids and Insights shows no replies — and it says so on the Insights
-panel rather than failing.
+Until the `greeting_name` block is applied the app still runs — greetings are
+derived from the name and address, as before, and a greeting typed into the
+contact form is dropped while the rest of the edit saves.
+
+Until the reply-tracking block is applied the app still runs — sends are recorded without
+their Gmail ids and Quick Actions shows no replies — and it says so on the Quick
+Actions status strip rather than failing.
 
 ### Google OAuth
 

@@ -11,11 +11,13 @@ struct ContactFormView: View {
     @State private var name = ""
     @State private var phone = ""
     @State private var position = ""
+    @State private var greetingName = ""
 
     var body: some View {
         NavigationStack {
             PaperForm {
-                RecruiterFields(email: $email, name: $name, position: $position, phone: $phone)
+                RecruiterFields(email: $email, name: $name, position: $position, phone: $phone,
+                                greetingName: $greetingName)
             }
             .navigationTitle("Add Cold Mail")
             .navigationBarTitleDisplayMode(.inline)
@@ -30,7 +32,8 @@ struct ContactFormView: View {
                             email: email.lowercased(),
                             name: name,
                             phone: phone.isEmpty ? nil : phone,
-                            position: position
+                            position: position,
+                            greetingName: greetingName.isEmpty ? nil : greetingName
                         ))
                         dismiss()
                     }
@@ -52,6 +55,7 @@ struct RecruiterFields: View {
     @Binding var name: String
     @Binding var position: String
     @Binding var phone: String
+    @Binding var greetingName: String
     var isEditing = true
     var header = "Recruiter"
 
@@ -59,8 +63,16 @@ struct RecruiterFields: View {
         email.contains("@") && !name.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// What a mail to this contact would open with, as edited right now — the
+    /// override if one is typed, otherwise what gets derived from the name and
+    /// address. Shown under the fields so the effect of filling in "Greeting
+    /// Name" is visible before anything is sent.
+    private var greetingPreview: String {
+        Contact(email: email, name: name, greetingName: greetingName).greeting
+    }
+
     var body: some View {
-        Section(header) {
+        Section {
             if isEditing {
                 TextField("Recruiter Email", text: $email)
                     .textInputAutocapitalization(.never)
@@ -70,6 +82,7 @@ struct RecruiterFields: View {
                         if value != value.lowercased() { email = value.lowercased() }
                     }
                 TextField("Name", text: $name)
+                TextField("Greeting Name (optional)", text: $greetingName)
                 TextField("Position (optional)", text: $position)
                 TextField("Phone Number (optional)", text: $phone)
                     .keyboardType(.phonePad)
@@ -79,6 +92,10 @@ struct RecruiterFields: View {
                 if !position.isEmpty { LabeledContent("Position", value: position) }
                 if !phone.isEmpty { LabeledContent("Phone", value: phone) }
             }
+        } header: {
+            Text(header)
+        } footer: {
+            Text("Mail opens “Hi \(greetingPreview),”")
         }
     }
 }

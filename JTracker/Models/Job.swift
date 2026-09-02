@@ -9,6 +9,12 @@ struct Contact: Identifiable, Decodable {
     var name = ""
     var phone: String?
     var position = ""
+    /// What to put after "Hi " when mailing this person. Set it when the `name`
+    /// field can't produce a good greeting on its own — an initial-first row
+    /// ("A Bagarwal"), a role mailbox, a name filed surname-first. Left null the
+    /// greeting is derived from `name` and `email` instead, so most rows never
+    /// need one. See `greeting`.
+    var greetingName: String?
     /// False when the address bounces or the person has left the company. Part of
     /// the shared recruiter row, not per-user: a dead address is dead for everyone.
     /// Invalid contacts are never suggested and can't be mailed — see
@@ -29,11 +35,13 @@ struct Contact: Identifiable, Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id, email, name, phone, position
+        case greetingName = "greeting_name"
         case isValid = "is_valid"
     }
 
     init(id: String = "", email: String = "", name: String = "", phone: String? = nil,
-         position: String = "", isValid: Bool = true, isSent: Bool = false, sentAt: Date? = nil,
+         position: String = "", greetingName: String? = nil,
+         isValid: Bool = true, isSent: Bool = false, sentAt: Date? = nil,
          sentSubject: String? = nil, sentBody: String? = nil,
          repliedAt: Date? = nil, replyFrom: String? = nil, replySnippet: String? = nil) {
         self.id = id
@@ -41,6 +49,7 @@ struct Contact: Identifiable, Decodable {
         self.name = name
         self.phone = phone
         self.position = position
+        self.greetingName = greetingName
         self.isValid = isValid
         self.isSent = isSent
         self.sentAt = sentAt
@@ -49,6 +58,15 @@ struct Contact: Identifiable, Decodable {
         self.repliedAt = repliedAt
         self.replyFrom = replyFrom
         self.replySnippet = replySnippet
+    }
+
+    /// The word that goes after "Hi " in a mail to this person: the stored
+    /// `greetingName` when there is one, and otherwise whatever `RecipientName`
+    /// can recover from the name and address. Every greeting in the app runs
+    /// through here, so overriding one row fixes it everywhere at once.
+    var greeting: String {
+        let override = greetingName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return override.isEmpty ? RecipientName.greeting(name: name, email: email) : override
     }
 
     /// Whether this contact wrote back to the last mail we sent them.
@@ -62,6 +80,8 @@ struct Contact: Identifiable, Decodable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         phone = try c.decodeIfPresent(String.self, forKey: .phone)
         position = try c.decodeIfPresent(String.self, forKey: .position) ?? ""
+        // Absent entirely until the `greeting_name` migration has been run.
+        greetingName = try c.decodeIfPresent(String.self, forKey: .greetingName)
         // Rows written before the column existed come back null — those are valid.
         isValid = try c.decodeIfPresent(Bool.self, forKey: .isValid) ?? true
     }
@@ -127,7 +147,7 @@ struct Job: Identifiable, Decodable {
     var invalidContacts: [Contact] { contacts.filter { !$0.isValid } }
 
     /// Contacts at this company who wrote back, and the ones still silent after
-    /// being mailed. Both drive Insights; neither counts anyone never mailed.
+    /// being mailed. Both drive Quick Actions; neither counts anyone never mailed.
     var repliedContacts: [Contact] { contacts.filter(\.hasReplied) }
     var awaitingContacts: [Contact] { contacts.filter { $0.isSent && !$0.hasReplied } }
 

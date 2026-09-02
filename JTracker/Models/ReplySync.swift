@@ -64,7 +64,7 @@ final class ReplySync {
 
     /// Recruiter ids whose thread came back with a delivery failure. Recomputed
     /// every sync from the thread itself (never stored), so it can't go stale —
-    /// Insights offers these up to be marked invalid.
+    /// Quick Actions offers these up to be marked invalid.
     private(set) var bouncedRecruiterIDs: Set<String> = []
 
     /// Performs an authorized Gmail GET. Injected so this type stays independent

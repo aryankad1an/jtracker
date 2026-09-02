@@ -72,7 +72,7 @@ struct MailContext {
     /// Build a context from a recipient contact, its company, and the sender profile.
     static func make(contact: Contact, company: String, profile: Profile) -> MailContext {
         MailContext(values: [
-            .receiverName: RecipientName.greeting(name: contact.name, email: contact.email),
+            .receiverName: contact.greeting,
             .receiverPosition: contact.position,
             .receiverCompany: company,
             .senderName: profile.name,

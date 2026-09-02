@@ -13,7 +13,7 @@ final class JobStore {
     private(set) var jobs: [Job] = []
     /// Every company in the shared catalog, with recruiters and this user's sent
     /// state overlaid. Drives the Companies list and the cross-company lanes of
-    /// Insights.
+    /// Quick Actions.
     private(set) var allCompanies: [Job] = []
     /// The Activity feed: every recruiter the user has sent to, newest first.
     /// Loaded from the send history, so it's independent of which companies are
@@ -22,7 +22,8 @@ final class JobStore {
     /// This user's raw send rows, kept so reply syncing can work out which sends
     /// still need a thread id or a reply check.
     private(set) var sends: [MailSend] = []
-    /// Everything Home's Insights screen shows, rebuilt at the end of each load.
+    /// Everything Home's card and Quick Actions show, rebuilt at the end of each
+    /// load.
     private(set) var insights = Insights()
 
     private(set) var isLoading = false

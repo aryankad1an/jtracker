@@ -294,7 +294,10 @@ struct SectionLabel: View {
 /// put the loudest colour on screen on a control rather than on what the control
 /// found.
 struct SegmentedSelector<Value: Hashable>: View {
-    let segments: [(value: Value, title: String, systemImage: String)]
+    /// `systemImage` is optional: a lane reads better with its glyph, but a row
+    /// of five short filters ("All", "3d+", "7d+"…) reads better without one —
+    /// at that width the icons crowd out the words they were labelling.
+    let segments: [(value: Value, title: String, systemImage: String?)]
     @Binding var selection: Value
 
     @Namespace private var pill
@@ -318,18 +321,20 @@ struct SegmentedSelector<Value: Hashable>: View {
     /// a background, the material composited *over* the label and greyed out the
     /// very word it was meant to pick out.
     @ViewBuilder
-    private func segmentButton(_ segment: (value: Value, title: String, systemImage: String)) -> some View {
+    private func segmentButton(_ segment: (value: Value, title: String, systemImage: String?)) -> some View {
         let isOn = segment.value == selection
         let button = Button {
             withAnimation(Theme.Motion.bouncy) { selection = segment.value }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: segment.systemImage)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(isOn ? Color.clay : Color.inkFaint)
-                    // The glyph bounces as its segment takes the pill, so the
-                    // travelling capsule lands on something that reacts to it.
-                    .symbolEffect(.bounce, value: isOn)
+                if let systemImage = segment.systemImage {
+                    Image(systemName: systemImage)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isOn ? Color.clay : Color.inkFaint)
+                        // The glyph bounces as its segment takes the pill, so the
+                        // travelling capsule lands on something that reacts to it.
+                        .symbolEffect(.bounce, value: isOn)
+                }
                 Text(segment.title)
                     .font(.subheadline.weight(isOn ? .semibold : .regular))
                     .foregroundStyle(isOn ? Color.ink : Color.inkMuted)
