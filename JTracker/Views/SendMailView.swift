@@ -1,10 +1,37 @@
 import SwiftUI
 
-/// Compose and send mails: pick a template, choose one or more recipients
-/// from the company's contacts, confirm, and send them all through the connected
-/// Gmail account. Successfully sent contacts are marked sent.
+/// One request to open the compose screen for a batch, so `.sheet(item:)` builds
+/// a fresh `SendMailView` per batch.
+struct SendBatch: Identifiable {
+    let id = UUID()
+    /// What the compose screen is titled — which group this is.
+    var title = "Send to All"
+    let recipients: [(contact: Contact, company: String)]
+}
+
+/// The compose screen: every mail that's about to go out, as it will read.
+///
+/// Who it goes to is decided before this screen opens — a contact's send button,
+/// a selection, a Quick Actions lane, the Send chooser — so it doesn't ask
+/// again. It used to: a template picker over a tickable recipient list, then
+/// Next to a separate review deck, then Send. That was three screens' worth of
+/// deciding for one decision that's left, which is *what to say*.
+///
+/// So it's one screen, laid out like the thing being made:
+///
+/// - an **envelope** — from, and to whom (fixed, one chip per person);
+/// - a **shelf of templates** — tap one and every letter below re-writes itself;
+/// - the **letters** themselves, a deck you swipe through, each exactly as it
+///   will be sent, each editable, each flagging any placeholder it left blank;
+/// - one **Send** button, which says what's in the way when something is.
+///
+/// Shared by the per-company send (`init(job:preselect:)`) and every
+/// cross-company batch (`init(title:recipients:onSent:)`).
 struct SendMailView: View {
-    let job: Job
+    let title: String
+    /// Called instead of the local `dismiss()` once the mails are queued, so the
+    /// presenter can also close whatever selection they came from.
+    var onSent: (() -> Void)?
 
     @Environment(TemplateStore.self) private var templateStore
     @Environment(ProfileStore.self) private var profileStore
@@ -12,164 +39,535 @@ struct SendMailView: View {
     @Environment(MailQueue.self) private var mailQueue
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selection: Set<Contact.ID>
+    private let recipients: [(contact: Contact, company: String)]
+
+    /// The mails as they stand — rendered from a template, then tailored.
+    @State private var letters: [MailPreview] = []
+    /// The template the whole batch was last written from. Individual letters can
+    /// be moved onto another one from their own menu.
     @State private var templateID: MailTemplate.ID?
-    @State private var showingPreview = false
-    /// A snapshot of the rendered mails that the review screen can tailor per
-    /// card. Rebuilt each time the user advances from the recipient list.
-    @State private var editablePreviews: [MailPreview] = []
+    /// The letter the deck is showing.
+    @State private var focusedID: MailPreview.ID?
+    @State private var editing: MailPreview?
+    /// A template tap that would overwrite hand edits, held until confirmed.
+    @State private var pendingTemplate: MailTemplate?
+    @State private var confirmingSend = false
 
-    /// - Parameter preselect: recipients to start selected. When nil, everyone
-    ///   not yet sent is preselected so a bulk send is one tap.
+    init(title: String = "New Mail",
+         recipients: [(contact: Contact, company: String)],
+         onSent: (() -> Void)? = nil) {
+        self.title = title
+        // The same bar every send in the app holds: a real address, not ruled out.
+        self.recipients = recipients.filter { $0.contact.isValid && $0.contact.email.contains("@") }
+        self.onSent = onSent
+    }
+
+    /// - Parameter preselect: who to write to. When nil, everyone here not yet
+    ///   mailed.
     init(job: Job, preselect: Set<Contact.ID>? = nil) {
-        self.job = job
-        let sendable = job.contacts.filter { $0.isValid && $0.email.contains("@") }
-        let sendableIDs = Set(sendable.map(\.id))
-        if let preselect {
-            _selection = State(initialValue: preselect.intersection(sendableIDs))
-        } else {
-            _selection = State(initialValue: Set(sendable.filter { !$0.isSent }.map(\.id)))
-        }
+        let picked = preselect.map { ids in job.contacts.filter { ids.contains($0.id) } }
+            ?? job.contacts.filter { !$0.isSent }
+        self.init(title: job.company, recipients: picked.map { ($0, job.company) })
     }
 
-    /// Contacts with a usable email that haven't been marked invalid — the ones we
-    /// can send to. Invalid ones aren't listed at all: they're not a choice to be
-    /// re-made on every send, which is the whole point of ruling them out once.
-    private var recipients: [Contact] {
-        job.contacts.filter { $0.isValid && $0.email.contains("@") }
-    }
+    private var templates: [MailTemplate] { templateStore.templates }
 
-    private var selectedTemplate: MailTemplate? {
-        templateStore.templates.first { $0.id == templateID }
-    }
+    private var companyCount: Int { Set(letters.map(\.company)).count }
 
-    private var canSend: Bool {
-        gmail.isConnected && selectedTemplate != nil && !selection.isEmpty
-    }
-
-    /// The fully rendered mails for the current template + selection, in the same
-    /// order shown in the recipients list.
-    private var previews: [MailPreview] {
-        guard let template = selectedTemplate else { return [] }
-        let profile = profileStore.profile
-        return recipients
-            .filter { selection.contains($0.id) }
-            .map { contact in
-                let context = MailContext.make(contact: contact, company: job.company, profile: profile)
-                return MailPreview(
-                    id: contact.id,
-                    contact: contact,
-                    company: job.company,
-                    name: contact.displayName,
-                    email: contact.email,
-                    subject: context.fill(template.subject),
-                    body: context.fill(template.content),
-                    templateID: template.id
-                )
-            }
+    private var focusedIndex: Int {
+        letters.firstIndex { $0.id == focusedID } ?? 0
     }
 
     var body: some View {
         NavigationStack {
-            PaperForm {
-                if !gmail.isConnected {
-                    Label("Connect Gmail in Profile to send mail.",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.kraft)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    envelope
+                    templateShelf
+                    deck
                 }
-
-                Section("Template") {
-                    if templateStore.templates.isEmpty {
-                        Text("Create a template first.").foregroundStyle(.inkMuted)
-                    } else {
-                        Picker("Template", selection: $templateID) {
-                            Text("Choose…").tag(MailTemplate.ID?.none)
-                            ForEach(templateStore.templates) { template in
-                                Text(template.name).tag(Optional(template.id))
-                            }
-                        }
-                    }
-                }
-
-                Section {
-                    ForEach(recipients) { contact in
-                        Button {
-                            toggle(contact.id)
-                        } label: {
-                            recipientRow(contact)
-                        }
-                        // Without this the Form paints the whole row in the accent
-                        // colour, so every recipient name read as a tappable link.
-                        .buttonStyle(.plain)
-                    }
-                } header: {
-                    Text("Recipients (\(selection.count) selected)")
-                }
+                .padding(.top, 6)
+                .padding(.bottom, 24)
             }
-            .navigationTitle("Send Mail")
+            .paperScreen()
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Next") {
-                        Haptics.press()
-                        editablePreviews = previews
-                        showingPreview = true
-                    }.disabled(!canSend)
+            }
+            .safeAreaInset(edge: .bottom) { sendBar }
+            .sheet(item: $editing) { letter in
+                MailEditorView(preview: letter) { subject, body in
+                    apply(id: letter.id, subject: subject, body: body)
                 }
             }
-            .navigationDestination(isPresented: $showingPreview) {
-                MailPreviewView(previews: $editablePreviews) { enqueue() }
+            .confirmationDialog("Replace your edits?",
+                                isPresented: Binding(get: { pendingTemplate != nil },
+                                                     set: { if !$0 { pendingTemplate = nil } }),
+                                titleVisibility: .visible,
+                                presenting: pendingTemplate) { template in
+                Button("Use “\(template.name)” for Every Mail", role: .destructive) {
+                    write(template, to: Set(letters.map(\.id)))
+                }
+            } message: { _ in
+                Text("Mails you've changed by hand will be rewritten from the template.")
             }
-            .onAppear {
-                if templateID == nil { templateID = templateStore.templates.first?.id }
+            .confirmationDialog("Send \(letters.count) mails now?",
+                                isPresented: $confirmingSend,
+                                titleVisibility: .visible) {
+                Button("Send \(letters.count) Mails") { send() }
+            } message: {
+                Text("They go out from your Gmail one after another. You can keep using the app while they do.")
             }
-            .sensoryFeedback(.selection, trigger: templateID)
+            .onAppear(perform: start)
+            // Templates can arrive after the screen does (a cold start, a pull
+            // on another device); the first one to land writes the letters.
+            .onChange(of: templates.map(\.id)) { start() }
+            .sensoryFeedback(.selection, trigger: focusedID)
         }
     }
 
-    private func recipientRow(_ contact: Contact) -> some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(contact.displayName)
-                    .foregroundStyle(.ink)
+    // MARK: - Envelope
+
+    /// From and To, set like the head of a letter. The To line is fixed: the
+    /// people were chosen on the screen this one was opened from.
+    private var envelope: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            envelopeLine("From") {
+                if let email = gmail.connectedEmail {
+                    Text(email)
+                        .font(.subheadline)
+                        .foregroundStyle(.ink)
+                        .lineLimit(1)
+                } else {
+                    Label("Gmail isn't connected — connect it in Profile", systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.kraft)
+                        .lineLimit(2)
+                }
+            }
+
+            Divider().overlay(Color.hairline).padding(.leading, 64)
+
+            envelopeLine("To") {
+                if letters.isEmpty {
+                    Text("Nobody here can be mailed")
+                        .font(.subheadline)
+                        .foregroundStyle(.inkFaint)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ScrollViewReader { proxy in
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(letters) { letter in
+                                        recipientChip(letter).id(letter.id)
+                                    }
+                                }
+                            }
+                            // The chip for the letter on show stays in view as
+                            // the deck is swiped.
+                            .onChange(of: focusedID) { _, id in
+                                guard let id else { return }
+                                withAnimation(Theme.Motion.snappy) { proxy.scrollTo(id, anchor: .center) }
+                            }
+                        }
+                        Text(letters.count == 1
+                             ? letters[0].email
+                             : "\(letters.count) people" + (companyCount > 1 ? " · \(companyCount) companies" : ""))
+                            .font(.caption)
+                            .foregroundStyle(.inkMuted)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+        .panel()
+        .padding(.horizontal, Theme.Space.gutter)
+    }
+
+    private func envelopeLine<Content: View>(_ label: String,
+                                             @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label.uppercased())
+                .font(.caption2.weight(.bold).monospaced())
+                .foregroundStyle(.inkFaint)
+                .frame(width: 40, alignment: .leading)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+    }
+
+    /// One person on the To line. Tapping it brings their letter to the front;
+    /// a dot says their letter needs a look (a blank) or has been hand-edited.
+    private func recipientChip(_ letter: MailPreview) -> some View {
+        let isFocused = letter.id == (focusedID ?? letters.first?.id)
+        // No haptic of its own: the deck's selection tick plays as it lands.
+        return Button {
+            withAnimation(Theme.Motion.snappy) { focusedID = letter.id }
+        } label: {
+            HStack(spacing: 6) {
+                MonogramAvatar(text: letter.name, size: 22)
+                Text(letter.name.split(separator: " ").first.map(String.init) ?? letter.name)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isFocused ? Color.ink : Color.inkMuted)
                     .lineLimit(1)
-                // Skipped when the name is already the address, which otherwise
-                // printed the same string on both lines.
-                if !contact.name.isEmpty {
-                    Text(contact.email)
-                        .font(.caption)
-                        .foregroundStyle(.inkMuted)
+                if !letter.missing.isEmpty {
+                    Circle().fill(Color.kraft).frame(width: 6, height: 6)
+                } else if letter.isEdited {
+                    Circle().fill(Color.slate).frame(width: 6, height: 6)
+                }
+            }
+            .padding(.leading, 3)
+            .padding(.trailing, 10)
+            .padding(.vertical, 3)
+            .background(isFocused ? Color.clay.opacity(0.16) : Color.paperSunken, in: Capsule())
+            .overlay(Capsule().strokeBorder(isFocused ? Color.clay.opacity(0.7) : .clear, lineWidth: 1))
+            .animation(Theme.Motion.pop, value: isFocused)
+        }
+        .buttonStyle(BouncyPress(scale: 0.9))
+        .accessibilityLabel(letter.name)
+        .accessibilityHint("Shows the mail to \(letter.name)")
+    }
+
+    // MARK: - Templates
+
+    /// The templates as a shelf of small cards. The one every letter is written
+    /// from is lit; tapping another re-writes them all at once.
+    private var templateShelf: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(title: "Template", systemImage: "doc.text", count: templates.isEmpty ? nil : templates.count)
+                .padding(.horizontal, Theme.Space.gutter)
+
+            if templates.isEmpty {
+                InlineEmptyState(title: "No templates yet",
+                                 systemImage: "doc.text",
+                                 message: "Write one in the Templates tab — it fills in each person's name, role and company for you.")
+                    .padding(.horizontal, Theme.Space.gutter)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(templates) { template in
+                            templateTile(template)
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .contentMargins(.horizontal, Theme.Space.gutter, for: .scrollContent)
+                .scrollTargetBehavior(.viewAligned)
+            }
+        }
+    }
+
+    private func templateTile(_ template: MailTemplate) -> some View {
+        let count = letters.count { $0.templateID == template.id }
+        let isAll = !letters.isEmpty && count == letters.count
+        let isSome = count > 0 && !isAll
+        return Button {
+            choose(template)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(template.name)
+                        .font(.display(15))
+                        .foregroundStyle(.ink)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if isAll {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.clay)
+                            .transition(.scale.combined(with: .opacity))
+                    } else if isSome {
+                        // Some letters were moved onto this one individually.
+                        Text("\(count)")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.clay)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.clay.opacity(0.14), in: Capsule())
+                    }
+                }
+                Text(template.subject.isEmpty ? "No subject" : template.subject)
+                    .font(.caption)
+                    .foregroundStyle(template.subject.isEmpty ? Color.inkFaint : Color.inkMuted)
+                    .lineLimit(2, reservesSpace: true)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(12)
+            .frame(width: 176, alignment: .leading)
+            .background(isAll ? Color.clay.opacity(0.10) : Color.paperRaised,
+                        in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .strokeBorder(isAll ? Color.clay : Color.hairline, lineWidth: isAll ? 1.5 : 1)
+            }
+            .animation(Theme.Motion.pop, value: isAll)
+        }
+        .buttonStyle(CardPress())
+        .accessibilityAddTraits(isAll ? .isSelected : [])
+    }
+
+    // MARK: - Letters
+
+    @ViewBuilder
+    private var deck: some View {
+        if !letters.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    SectionLabel(title: letters.count == 1 ? "Mail" : "Mails", systemImage: "envelope")
+                    Spacer()
+                    if letters.count > 1 {
+                        Text("\(focusedIndex + 1) of \(letters.count)")
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(.inkMuted)
+                            .contentTransition(.numericText())
+                            .animation(Theme.Motion.snappy, value: focusedIndex)
+                    }
+                }
+                .padding(.horizontal, Theme.Space.gutter)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    // Not lazy: every letter is measured, so they're all drawn
+                    // at the height of the longest and the deck doesn't change
+                    // height under the finger as it's swiped.
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(letters) { letter in
+                            LetterCard(letter: letter,
+                                       hasTemplate: letter.templateID != nil,
+                                       onEdit: { editing = letter }) {
+                                letterMenu(letter)
+                            }
+                            // The next letter peeks in from the edge, so a batch
+                            // reads as a stack to swipe rather than one mail.
+                            .containerRelativeFrame(.horizontal) { width, _ in
+                                width - Theme.Space.gutter * 2 - (letters.count > 1 ? 18 : 0)
+                            }
+                            .id(letter.id)
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .contentMargins(.horizontal, Theme.Space.gutter, for: .scrollContent)
+                .scrollTargetBehavior(.viewAligned)
+                .scrollPosition(id: $focusedID)
+                .scrollDisabled(letters.count == 1)
+
+                if letters.count > 1 && letters.count <= 16 {
+                    pageDots
+                }
+            }
+        }
+    }
+
+    private var pageDots: some View {
+        HStack(spacing: 5) {
+            ForEach(Array(letters.enumerated()), id: \.element.id) { index, letter in
+                Capsule()
+                    .fill(index == focusedIndex ? Color.clay
+                          : (letter.missing.isEmpty ? Color.inkFaint.opacity(0.5) : Color.kraft.opacity(0.7)))
+                    .frame(width: index == focusedIndex ? 16 : 6, height: 6)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(Theme.Motion.snappy, value: focusedIndex)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func letterMenu(_ letter: MailPreview) -> some View {
+        Button("Edit Mail", systemImage: "square.and.pencil") { editing = letter }
+        if !templates.isEmpty {
+            Menu("Use Template", systemImage: "doc.text") {
+                ForEach(templates) { template in
+                    Button(template.name) {
+                        Haptics.press()
+                        write(template, to: [letter.id])
+                    }
+                }
+            }
+            if companyCount > 1 {
+                Menu("Use Template for \(letter.company)", systemImage: "building.2") {
+                    ForEach(templates) { template in
+                        Button(template.name) {
+                            Haptics.press()
+                            write(template, to: Set(letters.filter { $0.company == letter.company }.map(\.id)))
+                        }
+                    }
+                }
+            }
+        }
+        if letters.count > 1 {
+            Divider()
+            Button("Leave Out of This Send", systemImage: "minus.circle", role: .destructive) {
+                leaveOut(letter)
+            }
+        }
+    }
+
+    // MARK: - Send
+
+    /// What's stopping the send, in words — shown above the button rather than
+    /// leaving a greyed-out button to explain itself.
+    private var blocker: String? {
+        if letters.isEmpty { return "Nobody here can be mailed." }
+        if !gmail.isConnected { return "Connect Gmail in Profile to send." }
+        if templates.isEmpty && letters.allSatisfy({ $0.templateID == nil && !$0.isEdited }) {
+            return "Write a template first."
+        }
+        let unwritten = letters.count { $0.subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if unwritten > 0 {
+            return unwritten == 1 && letters.count == 1
+                ? "This mail has no subject."
+                : "\(unwritten) of \(letters.count) mails have no subject."
+        }
+        return nil
+    }
+
+    /// Blanks don't block — a missing role often reads fine — but they're
+    /// counted here, where they're the last thing seen before sending.
+    private var blankCount: Int { letters.count { !$0.missing.isEmpty } }
+
+    private var sendTitle: String {
+        if letters.count == 1, let only = letters.first {
+            return "Send to \(only.name.split(separator: " ").first.map(String.init) ?? only.name)"
+        }
+        return "Send \(letters.count) Mails"
+    }
+
+    private var sendBar: some View {
+        VStack(spacing: 8) {
+            if let blocker {
+                Label(blocker, systemImage: "exclamationmark.circle.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.kraft)
+                    .transition(.opacity)
+            } else if blankCount > 0 {
+                Label(blankCount == 1 && letters.count == 1
+                      ? "A placeholder in this mail is blank"
+                      : "\(blankCount) mail\(blankCount == 1 ? " has" : "s have") a blank placeholder",
+                      systemImage: "circle.dashed")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.inkMuted)
+                    .transition(.opacity)
+            }
+
+            Button {
+                if letters.count > 1 {
+                    Haptics.press()
+                    confirmingSend = true
+                } else {
+                    send()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "paperplane.fill")
+                        .symbolEffect(.bounce, value: letters.count)
+                    Text(sendTitle)
+                        .contentTransition(.numericText())
                         .lineLimit(1)
                 }
+                .fontWeight(.semibold)
+                .frame(maxWidth: .infinity)
             }
-            Spacer(minLength: 4)
-            // Already-mailed contacts start unselected. Without the pill that
-            // reads as an arbitrary half-ticked list — this is the reason.
-            SentPill(sentAt: contact.sentAt)
-            let isOn = selection.contains(contact.id)
-            Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                // The tick bounces as it fills, so a run down a long recipient
-                // list has something to watch as well as something to feel.
-                .symbolEffect(.bounce, value: isOn)
-                .scaleEffect(isOn ? 1.1 : 1)
-                .animation(Theme.Motion.pop, value: isOn)
+            .primaryButton()
+            .controlSize(.large)
+            .disabled(blocker != nil)
+        }
+        .padding(.horizontal, Theme.Space.gutter)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity)
+        .background {
+            // The letters scroll away under the button rather than behind a
+            // hard edge.
+            LinearGradient(colors: [Color.paper.opacity(0), Color.paper.opacity(0.92), Color.paper],
+                           startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+        }
+        .animation(Theme.Motion.snappy, value: blocker)
+        .animation(Theme.Motion.pop, value: letters.count)
+    }
+
+    // MARK: - Actions
+
+    /// Write every letter from the first template, once there is one. Runs again
+    /// if the templates arrive late, but never over a hand edit.
+    private func start() {
+        guard letters.isEmpty || (templateID == nil && !letters.contains(where: \.isEdited)) else { return }
+        let template = templateID.flatMap { id in templates.first { $0.id == id } } ?? templates.first
+        templateID = template?.id
+        letters = recipients.map { render($0.contact, company: $0.company, template: template) }
+        if focusedID == nil { focusedID = letters.first?.id }
+    }
+
+    /// A template tap from the shelf. Hand edits are only ever overwritten on
+    /// purpose, so if there are any this asks first.
+    private func choose(_ template: MailTemplate) {
+        Haptics.press()
+        if letters.contains(where: \.isEdited) && template.id != templateID {
+            pendingTemplate = template
+        } else {
+            write(template, to: Set(letters.map(\.id)))
         }
     }
 
-    private func toggle(_ id: Contact.ID) {
-        Haptics.select()
-        if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+    /// Re-write the given letters from `template`, replacing any hand edits.
+    private func write(_ template: MailTemplate, to ids: Set<MailPreview.ID>) {
+        withAnimation(Theme.Motion.snappy) {
+            for index in letters.indices where ids.contains(letters[index].id) {
+                letters[index] = render(letters[index].contact, company: letters[index].company, template: template)
+            }
+            if ids.count == letters.count { templateID = template.id }
+        }
     }
 
-    /// Hand the reviewed mails to the background queue and get out of the way.
-    /// Exactly what's on the review screen goes out — including any per-card
-    /// edits — rather than being re-rendered from the template.
-    private func enqueue() {
-        let mails = editablePreviews.map {
+    private func render(_ contact: Contact, company: String, template: MailTemplate?) -> MailPreview {
+        guard let template else {
+            return MailPreview(id: contact.id, contact: contact, company: company,
+                               name: contact.displayName, email: contact.email,
+                               subject: "", body: "", templateID: nil)
+        }
+        let context = MailContext.make(contact: contact, company: company, profile: profileStore.profile)
+        let used = template.subject + template.content
+        let missing = MailPlaceholder.allCases.filter { placeholder in
+            used.contains(placeholder.token)
+                && (context.values[placeholder] ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        return MailPreview(id: contact.id, contact: contact, company: company,
+                           name: contact.displayName, email: contact.email,
+                           subject: context.fill(template.subject),
+                           body: context.fill(template.content),
+                           templateID: template.id,
+                           missing: missing)
+    }
+
+    /// Write a hand edit back into its letter. The letter has been read and
+    /// written by a person now, so its blanks stop being flagged.
+    private func apply(id: MailPreview.ID, subject: String, body: String) {
+        guard let index = letters.firstIndex(where: { $0.id == id }) else { return }
+        letters[index].subject = subject
+        letters[index].body = body
+        letters[index].isEdited = true
+        letters[index].missing = []
+    }
+
+    private func leaveOut(_ letter: MailPreview) {
+        Haptics.thud()
+        guard let index = letters.firstIndex(where: { $0.id == letter.id }) else { return }
+        let next = letters.indices.contains(index + 1) ? letters[index + 1].id : letters[max(0, index - 1)].id
+        withAnimation(Theme.Motion.snappy) {
+            letters.remove(at: index)
+            focusedID = letters.contains { $0.id == next } ? next : letters.first?.id
+        }
+    }
+
+    /// Hand the letters to the background queue and get out of the way. Exactly
+    /// what's on screen goes out, hand edits included.
+    private func send() {
+        let mails = letters.map {
             MailQueue.Mail(id: $0.id, recipient: $0.email, displayName: $0.name,
                            subject: $0.subject, body: $0.body)
         }
@@ -179,14 +577,130 @@ struct SendMailView: View {
         // the phone waiting to find out that it worked.
         Haptics.cascade(mails.count)
         mailQueue.enqueue(mails, fromName: profileStore.profile.name)
-        dismiss()
+        if let onSent { onSent() } else { dismiss() }
     }
 }
 
-/// One fully rendered mail, ready to preview and send. Subject/body are mutable
-/// so each card can be tailored on the review screen before sending. Carries the
-/// source `contact`, `company`, and the `templateID` it was rendered from so the
-/// review screen can re-render a subset when a different template is chosen.
+// MARK: - Letter
+
+/// One mail, drawn as a sheet of letter paper: who it's to, the subject set
+/// large, then the body exactly as it will arrive.
+private struct LetterCard<MenuItems: View>: View {
+    let letter: MailPreview
+    let hasTemplate: Bool
+    let onEdit: () -> Void
+    @ViewBuilder let menu: () -> MenuItems
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(14)
+
+            Divider().overlay(Color.hairline)
+
+            if hasTemplate || letter.isEdited {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(letter.subject.isEmpty ? "No subject" : letter.subject)
+                        .font(.display(18))
+                        .foregroundStyle(letter.subject.isEmpty ? Color.inkFaint : Color.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(letter.body)
+                        .font(.callout)
+                        .foregroundStyle(Color.ink.opacity(0.88))
+                        .lineSpacing(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .padding(14)
+            } else {
+                Text("Choose a template above and this mail writes itself.")
+                    .font(.callout)
+                    .foregroundStyle(.inkFaint)
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                    .multilineTextAlignment(.center)
+                    .padding(14)
+            }
+
+            if !letter.missing.isEmpty {
+                blanks
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .panelAccented(letter.missing.isEmpty ? nil : Color.kraft, radius: Theme.Radius.hero)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            MonogramAvatar(text: letter.name, size: Theme.Avatar.small)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(letter.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.ink)
+                        .lineLimit(1)
+                    if letter.isEdited {
+                        StatusChip(text: "Edited", systemImage: "pencil", color: .slate)
+                    }
+                }
+                Text("\(letter.email) · \(letter.company)")
+                    .font(.caption)
+                    .foregroundStyle(.inkMuted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Button {
+                Haptics.tap()
+                onEdit()
+            } label: {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.clay)
+                    .frame(width: 34, height: 34)
+                    .background(Color.clay.opacity(0.12), in: Circle())
+            }
+            .buttonStyle(BouncyPress(scale: 0.84))
+            .accessibilityLabel("Edit mail to \(letter.name)")
+
+            Menu {
+                menu()
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.inkMuted)
+                    .frame(width: 34, height: 34)
+                    .background(Color.paperSunken, in: Circle())
+            }
+            .accessibilityLabel("More for \(letter.name)")
+        }
+    }
+
+    /// The placeholders this letter left empty, named — "their role", "your
+    /// college" — so it's clear what to fill in before it reads oddly.
+    private var blanks: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "circle.dashed")
+                .font(.caption.weight(.bold))
+            Text("Blank here: " + letter.missing.map(\.blankLabel).joined(separator: ", "))
+                .font(.caption.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button("Fill in", action: onEdit)
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(.clay)
+        }
+        .foregroundStyle(.kraft)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.kraft.opacity(0.10))
+    }
+}
+
+/// One fully rendered mail, ready to send. Subject/body are mutable so each can
+/// be tailored before sending. Carries the source `contact`, `company`, and the
+/// `templateID` it was rendered from so it can be re-rendered from another.
 struct MailPreview: Identifiable {
     let id: Contact.ID
     let contact: Contact
@@ -196,271 +710,18 @@ struct MailPreview: Identifiable {
     var subject: String
     var body: String
     var templateID: MailTemplate.ID?
-}
-
-/// Reviews the rendered mails before sending: a single mail fills the screen, a
-/// batch shows as a horizontal deck of cards with a "Send All" button below.
-/// Shared by the per-company (`SendMailView`) and cross-company
-/// (`SuggestedSendView`) send flows.
-///
-/// Sending itself is handed to `MailQueue`, so this screen dismisses as soon as
-/// the button is tapped — there's no in-place progress to report.
-struct MailPreviewView: View {
-    @Binding var previews: [MailPreview]
-    let onSendAll: () -> Void
-
-    @Environment(TemplateStore.self) private var templateStore
-    @Environment(ProfileStore.self) private var profileStore
-
-    /// The card currently open in the edit drawer.
-    @State private var editingPreview: MailPreview?
-    /// nil = show all companies. Filters which cards the review deck shows so you
-    /// can focus on (and re-template) one company at a time.
-    @State private var companyFilter: String?
-
-    /// Distinct companies in this batch, sorted. The per-company controls only
-    /// appear when a send spans more than one.
-    private var companies: [String] {
-        Array(Set(previews.map(\.company)))
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-    }
-
-    private var showsControls: Bool { companies.count > 1 }
-
-    /// Cards matching the current company filter (all when none is set).
-    private var displayed: [MailPreview] {
-        guard let companyFilter else { return previews }
-        return previews.filter { $0.company == companyFilter }
-    }
-
-    /// The template shared by every currently-shown card, or nil when they differ.
-    private var activeTemplateID: MailTemplate.ID? {
-        let ids = Set(displayed.map(\.templateID))
-        return ids.count == 1 ? (ids.first ?? nil) : nil
-    }
-
-    private var activeTemplateName: String {
-        guard let id = activeTemplateID,
-              let template = templateStore.templates.first(where: { $0.id == id }) else { return "Mixed" }
-        return template.name
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if showsControls {
-                controlBar
-                Divider()
-            }
-            deck
-        }
-        .navigationTitle(previews.count == 1 ? "Review Mail" : "Review \(previews.count) Mails")
-        .navigationBarTitleDisplayMode(.inline)
-        // Filtering the deck to one company, or re-templating it, rebuilds the
-        // cards under the user's finger — springing them keeps that legible as
-        // the same deck rather than as a new screen.
-        .animation(Theme.Motion.bouncy, value: companyFilter)
-        .animation(Theme.Motion.bouncy, value: displayed.map(\.subject))
-        .safeAreaInset(edge: .bottom) { sendBar }
-        .sheet(item: $editingPreview) { preview in
-            MailEditorView(preview: preview) { subject, body in
-                apply(id: preview.id, subject: subject, body: body)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var deck: some View {
-        if displayed.count == 1, let only = displayed.first {
-            card(only)
-                .padding()
-        } else {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
-                    ForEach(displayed) { preview in
-                        card(preview).frame(width: 300)
-                    }
-                }
-                .padding()
-                .scrollTargetLayout()
-            }
-            .scrollTargetBehavior(.viewAligned)
-        }
-    }
-
-    /// A per-company review bar: filter the deck by company (left) and set the
-    /// template for whatever's currently shown (right) — so different companies
-    /// can go out on different templates in one bulk send.
-    private var controlBar: some View {
-        HStack(spacing: 12) {
-            Menu {
-                Button {
-                    Haptics.select()
-                    companyFilter = nil
-                } label: {
-                    if companyFilter == nil {
-                        Label("All companies", systemImage: "checkmark")
-                    } else {
-                        Text("All companies")
-                    }
-                }
-                Divider()
-                ForEach(companies, id: \.self) { company in
-                    Button {
-                        Haptics.select()
-                        companyFilter = company
-                    } label: {
-                        if companyFilter == company {
-                            Label(company, systemImage: "checkmark")
-                        } else {
-                            Text(company)
-                        }
-                    }
-                }
-            } label: {
-                Label(companyFilter ?? "All companies", systemImage: "line.3.horizontal.decrease.circle")
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
-
-            Menu {
-                if templateStore.templates.isEmpty {
-                    Text("No templates")
-                } else {
-                    ForEach(templateStore.templates) { template in
-                        Button {
-                            applyTemplate(template)
-                        } label: {
-                            if activeTemplateID == template.id {
-                                Label(template.name, systemImage: "checkmark")
-                            } else {
-                                Text(template.name)
-                            }
-                        }
-                    }
-                }
-            } label: {
-                Label(activeTemplateName, systemImage: "doc.plaintext")
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-            }
-            .disabled(templateStore.templates.isEmpty)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
-    }
-
-    /// Re-render the currently-shown cards from `template`, replacing their earlier
-    /// render (and any manual edits) for just that filtered set of companies.
-    private func applyTemplate(_ template: MailTemplate) {
-        Haptics.press()
-        let profile = profileStore.profile
-        let ids = Set(displayed.map(\.id))
-        for index in previews.indices where ids.contains(previews[index].id) {
-            let context = MailContext.make(contact: previews[index].contact,
-                                           company: previews[index].company, profile: profile)
-            previews[index].subject = context.fill(template.subject)
-            previews[index].body = context.fill(template.content)
-            previews[index].templateID = template.id
-        }
-    }
-
-    /// Write an edited card back into the deck so the review page updates.
-    private func apply(id: MailPreview.ID, subject: String, body: String) {
-        guard let index = previews.firstIndex(where: { $0.id == id }) else { return }
-        previews[index].subject = subject
-        previews[index].body = body
-    }
-
-    private func card(_ preview: MailPreview) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                MonogramAvatar(text: preview.name, size: Theme.Avatar.small)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(preview.name)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                    Text(preview.email)
-                        .font(.caption)
-                        .foregroundStyle(.inkMuted)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Button {
-                    Haptics.tap()
-                    editingPreview = preview
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.tint)
-                }
-                .buttonStyle(BouncyPress(scale: 0.84))
-                .accessibilityLabel("Edit mail to \(preview.name)")
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("SUBJECT")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.inkMuted)
-                Text(preview.subject)
-                    .font(.subheadline.weight(.semibold))
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("MESSAGE")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.inkMuted)
-                ScrollView {
-                    messageText(preview.body)
-                }
-            }
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color.paperRaised, in: RoundedRectangle(cornerRadius: 18))
-    }
-
-    private func messageText(_ text: String) -> some View {
-        Text(text)
-            .font(.callout)
-            .foregroundStyle(.ink)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private var sendBar: some View {
-        VStack(spacing: 0) {
-            Divider()
-            Button(action: onSendAll) {
-                HStack(spacing: 8) {
-                    Image(systemName: "paperplane.fill")
-                        // The plane takes off with the count, so re-templating or
-                        // filtering the deck visibly reloads the button too.
-                        .symbolEffect(.bounce, value: previews.count)
-                    Text(previews.count == 1 ? "Send" : "Send All (\(previews.count))")
-                        .contentTransition(.numericText())
-                }
-                .fontWeight(.semibold)
-                .frame(maxWidth: .infinity)
-            }
-            .primaryButton()
-            .controlSize(.large)
-            .padding()
-            .animation(Theme.Motion.pop, value: previews.count)
-        }
-        .background(Color.paperRaised)
-        .overlay(alignment: .top) { Divider().overlay(Color.hairline) }
-    }
+    /// Placeholders the template used that had nothing to fill them with here.
+    var missing: [MailPlaceholder] = []
+    /// Changed by hand since it was rendered.
+    var isEdited = false
 }
 
 /// A drawer for tailoring a single mail's subject and body before sending.
-/// Edits are local until "Save", which hands them back to the review deck.
+/// Edits are local until "Save", which hands them back to the compose screen.
 struct MailEditorView: View {
     let name: String
     let email: String
+    let missing: [MailPlaceholder]
     let onSave: (_ subject: String, _ body: String) -> Void
 
     @State private var subject: String
@@ -470,6 +731,7 @@ struct MailEditorView: View {
     init(preview: MailPreview, onSave: @escaping (String, String) -> Void) {
         self.name = preview.name
         self.email = preview.email
+        self.missing = preview.missing
         self.onSave = onSave
         _subject = State(initialValue: preview.subject)
         _messageBody = State(initialValue: preview.body)
@@ -485,6 +747,15 @@ struct MailEditorView: View {
                         Text(email)
                             .font(.caption)
                             .foregroundStyle(.inkMuted)
+                    }
+                }
+                if !missing.isEmpty {
+                    Section {
+                        Label("The template left " + missing.map(\.blankLabel).joined(separator: ", ")
+                              + " blank in this mail. Fill it in below, or reword around it.",
+                              systemImage: "circle.dashed")
+                            .font(.footnote)
+                            .foregroundStyle(.kraft)
                     }
                 }
                 Section("Subject") {

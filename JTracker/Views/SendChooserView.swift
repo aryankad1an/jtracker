@@ -104,7 +104,7 @@ private struct SendChooserFlow: ViewModifier {
                 .presentationDetents([.medium, .large])
             }
             .sheet(item: $batch) { batch in
-                SuggestedSendView(title: batch.title, recipients: batch.recipients) {
+                SendMailView(title: batch.title, recipients: batch.recipients) {
                     self.batch = nil
                     onSent()
                 }

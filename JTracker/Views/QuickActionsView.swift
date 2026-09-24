@@ -106,7 +106,7 @@ struct QuickActionsView: View {
                 MailSummaryView(contact: item.contact, company: item.company)
             }
             .sheet(item: $sendBatch) { batch in
-                SuggestedSendView(title: batch.title, recipients: batch.recipients) {
+                SendMailView(title: batch.title, recipients: batch.recipients) {
                     sendBatch = nil
                     selection.removeAll()
                 }
