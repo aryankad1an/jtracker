@@ -57,6 +57,10 @@ extension Theme {
         /// Figures and meters settling into place — a ring drawing itself, a
         /// number counting up. Slow enough to watch, and it lands twice.
         static let settle = Animation.snappy(duration: 0.62, extraBounce: 0.3)
+
+        /// Glass surfaces forming, morphing and dissolving. Longer and softer than
+        /// `bouncy`, with just enough overshoot to read as surface tension.
+        static let liquid = Animation.spring(duration: 0.55, bounce: 0.2)
     }
 }
 
@@ -130,7 +134,7 @@ extension View {
     /// Paired with `Theme.Motion.bouncy` it reads as the view springing into the
     /// space rather than being cross-faded into it.
     func popIn(anchor: UnitPoint = .center) -> some View {
-        transition(.scale(scale: 0.86, anchor: anchor).combined(with: .opacity))
+        transition(LiquidMaterialize(scale: 0.86, blur: 8, anchor: anchor))
     }
 }
 
@@ -187,6 +191,176 @@ private struct PressBody<Label: View>: View {
             .sensoryFeedback(trigger: isPressed) { _, pressed in
                 pressed ? .impact(weight: .light, intensity: intensity) : nil
             }
+    }
+}
+
+// MARK: - Buttons
+
+extension View {
+    /// The one filled action on a surface: clay (or `tint`) glass, white label.
+    ///
+    /// The white is stated, not inherited. Prominent glass draws a label's *icon*
+    /// in the tint colour unless told otherwise, which is how the plus on a clay
+    /// "Add Contact" button vanished into the clay behind it.
+    func primaryButton(_ tint: Color = .clay) -> some View {
+        buttonStyle(.glassProminent)
+            .tint(tint)
+            .foregroundStyle(.white)
+    }
+
+    /// A secondary action beside or below a primary one: clear glass.
+    func secondaryButton() -> some View {
+        buttonStyle(.glass)
+    }
+
+    /// A filled action that sits *on* a glass bar or capsule. Solid rather than
+    /// glass: glass on glass is two panes rendering at once, and the inner one
+    /// visibly trailed the bar whenever it moved.
+    func filledButton(_ tint: Color = .clay) -> some View {
+        buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .tint(tint)
+            .foregroundStyle(.white)
+    }
+}
+
+// MARK: - Screens and lists
+
+extension View {
+    /// The ground behind a whole screen, edge to edge: black, ruled as graph
+    /// paper. Every state of a screen sits on it — a spinner while searching, an
+    /// empty state, a list — so none of them can show the bare window instead.
+    func paperScreen() -> some View {
+        background {
+            GraphPaper()
+                .background(Color.paper)
+                .ignoresSafeArea()
+        }
+    }
+
+    /// A `List` laid out as a column of cards. It paints no ground of its own, so
+    /// the screen's graph paper shows between the cards.
+    func cardList() -> some View {
+        listStyle(.plain)
+            .scrollContentBackground(.hidden)
+    }
+
+    /// One card in a `cardList`: no separator, no row fill, the gutter either side.
+    func cardRow(top: CGFloat = 4, bottom: CGFloat = 4) -> some View {
+        listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: top, leading: Theme.Space.gutter,
+                                      bottom: bottom, trailing: Theme.Space.gutter))
+    }
+
+    /// Puts a `List` into (or out of) its multi-select mode.
+    func selectionEditMode(_ isSelecting: Bool) -> some View {
+        environment(\.editMode, .constant(isSelecting ? .active : .inactive))
+    }
+}
+
+/// Graph paper: faint rules on a square grid, every fourth one a shade
+/// stronger, like the axis grid of a chart. It's the ground of the whole app —
+/// the same grid the splash draws its curve on.
+///
+/// A single 4×4-cell tile, rendered once for the life of the app and repeated by
+/// the GPU. It used to be a full-screen `Canvas`, which is re-drawn whenever the
+/// screen above it is — including under every menu and sheet as it animated.
+struct GraphPaper: View {
+    var body: some View {
+        Image(uiImage: Self.tile)
+            .resizable(resizingMode: .tile)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private static let spacing: CGFloat = 22
+
+    private static let tile: UIImage = {
+        let side = spacing * 4
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { context in
+            let cg = context.cgContext
+            cg.setLineWidth(0.5)
+            for index in 0..<4 {
+                let offset = CGFloat(index) * spacing + 0.25
+                cg.setStrokeColor(index == 0
+                                  ? UIColor(Color.hairline).withAlphaComponent(0.55).cgColor
+                                  : UIColor(Color.grid).cgColor)
+                cg.move(to: CGPoint(x: offset, y: 0)); cg.addLine(to: CGPoint(x: offset, y: side))
+                cg.move(to: CGPoint(x: 0, y: offset)); cg.addLine(to: CGPoint(x: side, y: offset))
+                cg.strokePath()
+            }
+        }
+    }()
+}
+
+/// A whole screen that's still loading: a spinner, on paper.
+struct LoadingState: View {
+    var label: String?
+
+    var body: some View {
+        Group {
+            if let label { ProgressView(label) } else { ProgressView() }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .paperScreen()
+        .transition(.opacity)
+    }
+}
+
+/// A spinner as the last row of a list, while its next page loads.
+struct LoadingRow: View {
+    var body: some View {
+        ProgressView()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+    }
+}
+
+/// A list's multi-select mode: whether it's on, and what's ticked.
+///
+/// Every list with a Select mode used to carry its own copy of the same three
+/// functions — enter, enter-by-holding-a-row, exit — with the same haptics and
+/// the same spring. This is that, once.
+///
+/// A class, not a struct, on purpose. A mutating method on a `@State` struct
+/// writes the new value back only *after* it returns — outside its own
+/// `withAnimation` — so entering and leaving the mode quietly stopped animating.
+/// Here the state changes inside the animation, where it belongs.
+@Observable
+final class ListSelection<ID: Hashable> {
+    var isSelecting = false
+    var ids = Set<ID>()
+
+    var count: Int { ids.count }
+    func contains(_ id: ID) -> Bool { ids.contains(id) }
+
+    /// From a menu: the mode opens with nothing picked.
+    func enter() {
+        ids = []
+        Haptics.press()
+        withAnimation(Theme.Motion.liquid) { isSelecting = true }
+    }
+
+    /// From holding a row: the mode opens with that row already picked, which is
+    /// the whole reason to hold *this* row. `SelectionHold` plays the knock.
+    func begin(with id: ID) {
+        withAnimation(Theme.Motion.liquid) {
+            ids = [id]
+            isSelecting = true
+        }
+    }
+
+    func exit() {
+        Haptics.tap(0.5)
+        withAnimation(Theme.Motion.liquid) {
+            isSelecting = false
+            ids = []
+        }
+    }
+
+    func toggle(_ id: ID) {
+        if ids.contains(id) { ids.remove(id) } else { ids.insert(id) }
     }
 }
 
@@ -381,7 +555,7 @@ struct PaperForm<Content: View>: View {
                 .listRowBackground(Color.paperRaised)
         }
         .scrollContentBackground(.hidden)
-        .background(Color.paper)
+        .paperScreen()
     }
 }
 
@@ -395,7 +569,7 @@ struct PaperList<Content: View>: View {
                 .listRowBackground(Color.paperRaised)
         }
         .scrollContentBackground(.hidden)
-        .background(Color.paper)
+        .paperScreen()
     }
 }
 
@@ -429,5 +603,62 @@ struct InlineEmptyState: View {
         .padding(.horizontal, 20)
         .panel()
         .popIn()
+    }
+}
+
+// MARK: - Wrapping layout
+
+/// Lays its children out left to right, wrapping onto a new line when the next
+/// one won't fit — for chips, whose count and widths aren't known up front. A
+/// horizontal scroll view hid everything past the edge; this shows it all.
+struct WrappingHStack: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        let height = rows.map(\.height).reduce(0, +) + lineSpacing * CGFloat(max(rows.count - 1, 0))
+        let width = rows.map(\.width).max() ?? 0
+        return CGSize(width: proposal.width ?? width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for index in row.indices {
+                var size = subviews[index].sizeThatFits(.unspecified)
+                size.width = min(size.width, bounds.width)
+                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
+                                      proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + lineSpacing
+        }
+    }
+
+    private struct Row {
+        var indices: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = []
+        var current = Row()
+        for index in subviews.indices {
+            var size = subviews[index].sizeThatFits(.unspecified)
+            size.width = min(size.width, width)
+            let needed = current.indices.isEmpty ? size.width : current.width + spacing + size.width
+            if needed > width, !current.indices.isEmpty {
+                rows.append(current)
+                current = Row()
+            }
+            current.width = current.indices.isEmpty ? size.width : current.width + spacing + size.width
+            current.height = max(current.height, size.height)
+            current.indices.append(index)
+        }
+        if !current.indices.isEmpty { rows.append(current) }
+        return rows
     }
 }

@@ -1,10 +1,21 @@
 import SwiftUI
 
-/// Add a new cold-mail contact (recruiter). Editing an existing one happens in
-/// `ContactDetailView`.
+/// Add a new contact. Editing an existing one happens in `ContactDetailView`.
+///
+/// The company is suggested from the address. As soon as the email has a work
+/// domain, the catalog is asked who already uses it — on a company's row or on
+/// any of its contacts — and the form offers that company. It's what keeps the
+/// catalog free of duplicates without anyone ever having to merge two: the
+/// second "Stripe Inc" never gets created, because typing `@stripe.com` already
+/// pointed at Stripe.
 struct ContactFormView: View {
-    let onSave: (Contact) -> Void
+    /// The company the form opened from, if any. Preselected, but a domain match
+    /// elsewhere is still offered — adding someone to the wrong company is
+    /// exactly the mistake this form is built to catch.
+    var initialCompany: Job?
+    let onSave: (Contact, JobStore.ContactDestination) -> Void
 
+    @Environment(JobStore.self) private var jobStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var email = ""
@@ -13,51 +24,310 @@ struct ContactFormView: View {
     @State private var position = ""
     @State private var greetingName = ""
 
+    @State private var destination: JobStore.ContactDestination?
+    /// Set once the user picks a company themselves, so a suggestion never
+    /// overrides a deliberate choice.
+    @State private var userChoseCompany = false
+    @State private var isPickingCompany = false
+
+    /// Companies already on file for `domain`, and the domain they were looked
+    /// up for (the lookup trails the typing).
+    @State private var matches: [Job] = []
+    @State private var matchedDomain: String?
+    @State private var isLookingUp = false
+
+    init(initialCompany: Job? = nil, onSave: @escaping (Contact, JobStore.ContactDestination) -> Void) {
+        self.initialCompany = initialCompany
+        self.onSave = onSave
+        _destination = State(initialValue: initialCompany.map { .existing($0) })
+    }
+
+    /// The work domain of the address being typed; nil for a personal mailbox.
+    private var domain: String? { MailDomain.work(fromEmail: email) }
+
+    private var selectedCompany: Job? {
+        if case .existing(let job) = destination { return job }
+        return nil
+    }
+
+    /// Current matches, once the lookup has caught up with the address.
+    private var currentMatches: [Job] {
+        matchedDomain == domain ? matches : []
+    }
+
+    private var canSave: Bool {
+        ContactFields.isValid(email: email, name: name) && destination != nil
+    }
+
     var body: some View {
         NavigationStack {
             PaperForm {
-                RecruiterFields(email: $email, name: $name, position: $position, phone: $phone,
-                                greetingName: $greetingName)
+                ContactFields(email: $email, name: $name, position: $position, phone: $phone,
+                              greetingName: $greetingName)
+                companySection
             }
-            .navigationTitle("Add Cold Mail")
+            .navigationTitle("Add Contact")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(isPresented: $isPickingCompany) {
+                CompanyPickerView { picked in
+                    userChoseCompany = true
+                    withAnimation(Theme.Motion.snappy) { destination = picked }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        Haptics.success()
-                        onSave(Contact(
-                            email: email.lowercased(),
-                            name: name,
-                            phone: phone.isEmpty ? nil : phone,
-                            position: position,
-                            greetingName: greetingName.isEmpty ? nil : greetingName
-                        ))
-                        dismiss()
-                    }
-                    .disabled(!RecruiterFields.isValid(email: email, name: name))
+                    Button("Save") { save() }
+                        .disabled(!canSave)
                 }
             }
+            .task(id: domain) { await lookUpDomain() }
+            .animation(Theme.Motion.snappy, value: currentMatches.map(\.id))
+            .animation(Theme.Motion.snappy, value: isLookingUp)
         }
+    }
+
+    // MARK: - Company
+
+    private var companySection: some View {
+        Section {
+            Button {
+                isPickingCompany = true
+            } label: {
+                HStack(spacing: 12) {
+                    MonogramAvatar(company: destinationName ?? "?", size: Theme.Avatar.small)
+                        .opacity(destination == nil ? 0.4 : 1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(destinationName ?? "Choose a company")
+                            .font(.headline)
+                            .foregroundStyle(destination == nil ? Color.inkMuted : Color.ink)
+                        if case .new = destination {
+                            Text("New company")
+                                .font(.caption)
+                                .foregroundStyle(Color.clay)
+                        } else if let selectedCompany, !selectedCompany.allDomains.isEmpty {
+                            Text(selectedCompany.allDomains.prefix(2).map { "@\($0)" }.joined(separator: "  "))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(Color.inkMuted)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.inkFaint)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(destinationName.map { "Company, \($0)" } ?? "Choose a company")
+
+            if let domain {
+                if isLookingUp && matchedDomain != domain {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Looking up @\(domain)…")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.inkMuted)
+                    }
+                } else {
+                    ForEach(currentMatches.filter { $0.id != selectedCompany?.id }) { match in
+                        suggestionRow(match, domain: domain)
+                    }
+                }
+            }
+        } header: {
+            Text("Company")
+        } footer: {
+            if let footer = companyFooter { Text(footer) }
+        }
+    }
+
+    private var destinationName: String? {
+        switch destination {
+        case .existing(let job): job.company
+        case .new(let name): name
+        case nil: nil
+        }
+    }
+
+    /// "The database found this domain at…" — one tap moves the contact there.
+    private func suggestionRow(_ match: Job, domain: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.body)
+                .foregroundStyle(Color.clay)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("@\(domain) is on file at \(match.company)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.ink)
+                Text("\(match.contacts.count) contact\(match.contacts.count == 1 ? "" : "s")"
+                     + (match.domains.contains(domain) ? " · listed domain" : " · from its contacts"))
+                    .font(.caption)
+                    .foregroundStyle(Color.inkMuted)
+            }
+            Spacer(minLength: 8)
+            Button("Use") {
+                Haptics.press()
+                userChoseCompany = true
+                withAnimation(Theme.Motion.snappy) { destination = .existing(match) }
+            }
+            .font(.subheadline.weight(.semibold))
+            .primaryButton()
+        }
+        .transition(LiquidMaterialize(scale: 0.94, blur: 8, anchor: .top))
+    }
+
+    private var companyFooter: String? {
+        let emailKey = email.lowercased()
+        if let selectedCompany, selectedCompany.contacts.contains(where: { $0.email.lowercased() == emailKey }) {
+            return "\(email) is already a contact at \(selectedCompany.company). Saving updates their details."
+        }
+        guard let domain, matchedDomain == domain, !isLookingUp else {
+            if !email.isEmpty, email.contains("@"), domain == nil {
+                return "Personal addresses don't identify a company, so pick one yourself."
+            }
+            return nil
+        }
+        switch destination {
+        case .existing(let job) where currentMatches.contains(where: { $0.id == job.id }):
+            return "@\(domain) belongs to \(job.company)."
+        case .existing(let job) where currentMatches.isEmpty:
+            return "@\(domain) is new to the database. It'll be added to \(job.company)'s domains."
+        case .existing(let job):
+            return "@\(domain) is used elsewhere, so it won't be added to \(job.company)'s domains."
+        case .new(let name):
+            return currentMatches.isEmpty ? "\(name) will be created with @\(domain)." : nil
+        case nil:
+            return currentMatches.isEmpty ? "No company uses @\(domain) yet. Choose one, or create it." : nil
+        }
+    }
+
+    /// Ask the catalog who uses the typed domain. Driven by `.task(id: domain)`,
+    /// so typing cancels the previous lookup and the pause debounces it.
+    private func lookUpDomain() async {
+        guard let domain else {
+            matches = []; matchedDomain = nil; isLookingUp = false
+            return
+        }
+        isLookingUp = true
+        guard await Task.debounce(.milliseconds(350)) else { return }
+        let found = (try? await jobStore.companies(forDomain: domain)) ?? []
+        guard !Task.isCancelled else { return }
+        matches = found
+        matchedDomain = domain
+        isLookingUp = false
+
+        // Nothing chosen yet and exactly one company fits: that's the answer.
+        if !userChoseCompany, destination == nil, found.count == 1 {
+            Haptics.select()
+            withAnimation(Theme.Motion.snappy) { destination = .existing(found[0]) }
+        }
+    }
+
+    private func save() {
+        guard let destination else { return }
+        Haptics.success()
+        onSave(Contact(
+            email: email.lowercased().trimmingCharacters(in: .whitespaces),
+            name: name.trimmingCharacters(in: .whitespaces),
+            phone: phone.isEmpty ? nil : phone,
+            position: position,
+            greetingName: greetingName.isEmpty ? nil : greetingName
+        ), destination)
+        dismiss()
     }
 }
 
-/// The shared recruiter form fields, reused by add and edit.
+/// Pick the company a new contact belongs to — any in the catalog, or a new one
+/// named after the search.
+struct CompanyPickerView: View {
+    let onPick: (JobStore.ContactDestination) -> Void
+
+    @Environment(JobStore.self) private var jobStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+    @State private var remote: [Job] = []
+
+    private var query: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var results: [Job] {
+        query.isEmpty ? jobStore.allCompanies : .matching(query, in: jobStore.allCompanies, remote)
+    }
+
+    private var canCreate: Bool {
+        !query.isEmpty && !results.contains { $0.company.caseInsensitiveCompare(query) == .orderedSame }
+    }
+
+    var body: some View {
+        PaperList {
+            if canCreate {
+                Button {
+                    pick(.new(name: query))
+                } label: {
+                    Label("Create “\(query)”", systemImage: "plus.circle.fill")
+                        .foregroundStyle(Color.clay)
+                }
+            }
+            ForEach(results) { company in
+                Button {
+                    pick(.existing(company))
+                } label: {
+                    HStack(spacing: 12) {
+                        MonogramAvatar(company: company.company, size: Theme.Avatar.small)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(company.company)
+                                .font(.headline)
+                                .foregroundStyle(Color.ink)
+                            if !company.mailDomain.isEmpty {
+                                Text("@\(company.mailDomain)")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(Color.inkMuted)
+                            }
+                        }
+                        Spacer(minLength: 8)
+                        Text("\(company.contacts.count)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.inkMuted)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Company")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Search, or type a new name")
+        .task(id: query) {
+            guard !query.isEmpty else { remote = []; return }
+            guard await Task.debounce(.milliseconds(250)) else { return }
+            if let found = try? await SupabaseAPI.searchCompanies(query: query), !Task.isCancelled {
+                remote = found
+            }
+        }
+    }
+
+    private func pick(_ destination: JobStore.ContactDestination) {
+        Haptics.select()
+        onPick(destination)
+        dismiss()
+    }
+}
+
+/// The shared contact form fields, reused by add and edit.
 ///
 /// Read-only mode isn't just "the same fields, disabled". A disabled `TextField`
 /// renders its value with no label at all, so a filled-in detail screen became a
 /// stack of anonymous strings — you could read "HARMESH ROHIT" but nothing said
 /// which field it was. `LabeledContent` names each value instead.
-struct RecruiterFields: View {
+struct ContactFields: View {
     @Binding var email: String
     @Binding var name: String
     @Binding var position: String
     @Binding var phone: String
     @Binding var greetingName: String
     var isEditing = true
-    var header = "Recruiter"
+    var header = "Contact"
 
     static func isValid(email: String, name: String) -> Bool {
         email.contains("@") && !name.trimmingCharacters(in: .whitespaces).isEmpty
@@ -74,7 +344,7 @@ struct RecruiterFields: View {
     var body: some View {
         Section {
             if isEditing {
-                TextField("Recruiter Email", text: $email)
+                TextField("Email", text: $email)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.emailAddress)
@@ -96,6 +366,28 @@ struct RecruiterFields: View {
             Text(header)
         } footer: {
             Text("Mail opens “Hi \(greetingPreview),”")
+        }
+    }
+}
+
+extension View {
+    /// The Add Contact sheet, wired to the store: every screen that offers
+    /// "Add Contact" presents exactly this.
+    func addContactSheet(isPresented: Binding<Bool>, initialCompany: Job? = nil) -> some View {
+        modifier(AddContactSheet(isPresented: isPresented, initialCompany: initialCompany))
+    }
+}
+
+private struct AddContactSheet: ViewModifier {
+    @Binding var isPresented: Bool
+    let initialCompany: Job?
+    @Environment(JobStore.self) private var jobStore
+
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $isPresented) {
+            ContactFormView(initialCompany: initialCompany) { contact, destination in
+                Task { await jobStore.addContact(contact, to: destination) }
+            }
         }
     }
 }

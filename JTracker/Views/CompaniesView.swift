@@ -9,11 +9,13 @@ struct CompaniesView: View {
 
     @State private var searchText = ""
     @State private var showEmpty = false
-    @State private var isSelecting = false
-    @State private var selection = Set<String>()
+    @State private var selection = ListSelection<String>()
     @State private var confirmingDelete = false
     @State private var pendingDelete: Job?
     @State private var isAdding = false
+    @State private var isAddingContact = false
+    @State private var sendingTo: SendTarget?
+    @Namespace private var zoom
     @State private var editingCompany: Job?
     /// Rows push through this rather than through `NavigationLink`, so the card
     /// can carry its own chevron instead of the system drawing one outside it.
@@ -30,38 +32,53 @@ struct CompaniesView: View {
     /// matches it but has no contacts yet is a result, not a row to hide — and
     /// hiding it is indistinguishable from the company not existing, which is the
     /// question the search was asked to answer.
+    ///
+    /// Searching covers the loaded pages *and* the server's matches, so a company
+    /// on a page not yet scrolled to is still found.
     private var filtered: [Job] {
-        guard query.isEmpty else { return jobStore.allCompanies.filter { $0.matches(query) } }
+        guard query.isEmpty else {
+            return .matching(query, in: jobStore.allCompanies, jobStore.searchResults)
+        }
         return showEmpty ? jobStore.allCompanies : jobStore.allCompanies.filter { !$0.contacts.isEmpty }
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
+        // Filtered once per render: the rows, the empty check and the paging
+        // trigger all read the same array instead of each re-filtering the catalog.
+        let rows = filtered
+        return NavigationStack(path: $path) {
             Group {
                 if jobStore.allCompanies.isEmpty {
                     if jobStore.isLoading {
-                        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                        LoadingState()
                     } else {
-                        emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        emptyState
                     }
-                } else if filtered.isEmpty {
-                    noMatchesState.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if rows.isEmpty {
+                    if jobStore.isSearchingServer || (query.isEmpty && jobStore.hasMoreCompanies) {
+                        LoadingState(label: query.isEmpty ? nil : "Searching companies…")
+                            // Every loaded company can be empty while later pages
+                            // aren't: with no last row to scroll to, nothing else
+                            // would ever ask for the next page.
+                            .task(id: jobStore.allCompanies.count) {
+                                if query.isEmpty { await jobStore.loadMoreCompanies() }
+                            }
+                    } else {
+                        noMatchesState
+                    }
                 } else {
-                    List(selection: $selection) {
-                        Section { companyRows(filtered) }
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 4, leading: Theme.Space.gutter,
-                                                      bottom: 4, trailing: Theme.Space.gutter))
+                    List(selection: $selection.ids) {
+                        Section {
+                            companyRows(rows)
+                            if jobStore.isLoadingMoreCompanies || jobStore.isSearchingServer {
+                                LoadingRow()
+                            }
+                        }
+                        .cardRow()
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.paper)
-                    .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
+                    .cardList()
+                    .selectionEditMode(selection.isSelecting)
                     .refreshable { await jobStore.load() }
-                    // Companies added, deleted, or filtered out spring rather than
-                    // cut, so the catalog changing is visible without a banner.
-                    .animation(Theme.Motion.bouncy, value: filtered.map(\.id))
                     // Each row's pin appears and disappears with the same spring.
                     .animation(Theme.Motion.pop, value: jobStore.jobs.count)
                     // ...but not while typing: springing the list once per
@@ -70,67 +87,76 @@ struct CompaniesView: View {
                     .scrollDismissesKeyboard(.immediately)
                 }
             }
+            .paperScreen()
             .navigationTitle("Companies")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: String.self) { companyID in
+                // The card the user tapped grows into the company screen, and
+                // shrinks back into its place on the way out.
                 JobDetailView(jobID: companyID)
+                    .navigationTransition(.zoom(sourceID: companyID, in: zoom))
             }
             .searchable(text: $searchText, prompt: "Search companies, sectors, people")
+            // Cancelled and restarted per keystroke, which is what debounces it.
+            .task(id: query) { await jobStore.searchCompanies(query: query) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    if isSelecting {
-                        GlassDoneButton { exitSelection() }
+                    if selection.isSelecting {
+                        DoneButton { selection.exit() }
                     } else {
                         menu
                     }
                 }
             }
             .selectionActions(
-                isSelecting: isSelecting,
+                isSelecting: selection.isSelecting,
                 count: selection.count,
                 noun: SelectionNoun(singular: "company", plural: "companies"),
                 confirmingDelete: $confirmingDelete,
                 deleteMessage: "This permanently deletes the selected companies — and their contacts — from the shared database, for every user. This can't be undone.",
-                bulkAction: trackAction
-            ) { deleteSelected() }
-            .confirmationDialog(
-                "Delete \(pendingDelete?.company ?? "company")?",
-                isPresented: Binding(get: { pendingDelete != nil },
-                                     set: { if !$0 { pendingDelete = nil } }),
-                titleVisibility: .visible
-            ) {
-                Button("Delete", role: .destructive) {
-                    if let job = pendingDelete { Task { await jobStore.deleteCompanyUpstream(job.id) } }
-                    pendingDelete = nil
-                }
-            } message: {
-                Text("This permanently deletes this company and its contacts from the shared database, for every user. This can't be undone.")
+                sendableCount: selectedCompanies.reduce(0) { $0 + $1.validContacts.count },
+                onSend: { sendingTo = SendTarget(companies: selectedCompanies) },
+                bulkAction: trackAction,
+                onDelete: deleteSelected
+            )
+            .uniformDeleteAlert(
+                item: $pendingDelete,
+                title: { "Delete “\($0.company)”?" },
+                message: "This permanently deletes the company and its contacts from the shared database, for every user. This can't be undone."
+            ) { company in
+                Task { await jobStore.deleteCompanyUpstream(company.id) }
             }
             .sheet(isPresented: $isAdding) {
-                CompanyFormView(title: "New Company", confirmLabel: "Add") { name, sector in
+                CompanyFormView(title: "New Company", confirmLabel: "Add") { name, sector, domains in
                     // A brand-new company has no contacts yet, so reveal empty
                     // companies — otherwise the add would seem to do nothing.
                     showEmpty = true
-                    Task { await jobStore.createCompany(name: name, sector: sector.isEmpty ? nil : sector) }
+                    Task {
+                        await jobStore.createCompany(
+                            name: name,
+                            sector: sector.isEmpty ? nil : sector,
+                            domains: domains
+                        )
+                    }
                 }
             }
-            .sheet(item: $editingCompany) { company in
-                CompanyFormView(name: company.company, sector: company.sector ?? "",
-                                title: "Edit Company", confirmLabel: "Save") { name, sector in
-                    Task { await jobStore.updateCompany(id: company.id, name: name,
-                                                        sector: sector.isEmpty ? nil : sector) }
-                }
-            }
+            .addContactSheet(isPresented: $isAddingContact)
+            .sendChooser(for: $sendingTo) { selection.exit() }
+            .companyEditor(for: $editingCompany)
+            .undoBanner()
         }
     }
 
     private var menu: some View {
         Menu {
+            Button { isAddingContact = true } label: {
+                Label("Add Contact", systemImage: "person.crop.circle.badge.plus")
+            }
             Button { isAdding = true } label: {
                 Label("Add Company", systemImage: "plus")
             }
             if !jobStore.allCompanies.isEmpty {
-                Button { enterSelection() } label: {
+                Button { selection.enter() } label: {
                     Label("Select", systemImage: "checkmark.circle")
                 }
             }
@@ -144,15 +170,28 @@ struct CompaniesView: View {
         .accessibilityLabel("More actions")
     }
 
+    /// The row whose appearance fetches the next page: ten from the end.
+    private func prefetchID(in companies: [Job]) -> String? {
+        companies.dropLast(10).last?.id ?? companies.first?.id
+    }
+
     @ViewBuilder
     private func companyRows(_ companies: [Job]) -> some View {
         ForEach(companies) { company in
             let tracked = jobStore.isTracked(company.id)
             CompanyRow(job: company, isTracked: tracked)
-                .selectableRow(isSelecting: isSelecting) {
-                    beginSelection(with: company.id)
+                .matchedTransitionSource(id: company.id, in: zoom)
+                .selectableRow(isSelecting: selection.isSelecting) {
+                    selection.begin(with: company.id)
                 } onTap: {
                     path.append(company.id)
+                }
+                // Ask for the next 50 while ten rows are still to come, so the
+                // page lands before the list runs out rather than after.
+                .onAppear {
+                    if query.isEmpty, company.id == prefetchID(in: companies) {
+                        Task { await jobStore.loadMoreCompanies() }
+                    }
                 }
             .swipeActions(edge: .trailing) {
                 Button(role: .destructive) {
@@ -197,31 +236,15 @@ struct CompaniesView: View {
         }
     }
 
-    private func enterSelection() {
-        selection = []
-        Haptics.press()
-        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
-    }
-
-    /// Entered by holding a row: the mode arrives with that row already picked,
-    /// which is the whole reason to hold *this* row rather than any other. The
-    /// knock is played by `SelectionHold`, so there's none here.
-    private func beginSelection(with id: String) {
-        selection = [id]
-        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
-    }
-
-    private func exitSelection() {
-        Haptics.tap(0.5)
-        withAnimation(Theme.Motion.bouncy) { isSelecting = false }
-        selection = []
+    private var selectedCompanies: [Job] {
+        jobStore.allCompanies.filter { selection.contains($0.id) }
     }
 
     /// One slot that flips meaning: once everything selected is already tracked,
     /// "Track" is a no-op, so the button becomes the useful inverse instead of
     /// leaving tracked companies with no bulk action at all.
     private var trackAction: SelectionBulkAction {
-        let selected = jobStore.allCompanies.filter { selection.contains($0.id) }
+        let selected = selectedCompanies
         let allTracked = !selected.isEmpty && selected.allSatisfy { jobStore.isTracked($0.id) }
         return SelectionBulkAction(
             title: allTracked ? "Untrack" : "Track",
@@ -231,20 +254,20 @@ struct CompaniesView: View {
                 for company in selected { jobStore.untrack(companyID: company.id) }
                 Haptics.tap()
             } else {
-                jobStore.trackCompanies(Array(selection))
+                jobStore.trackCompanies(Array(selection.ids))
                 // One beat per company, capped — a bulk track should feel like
                 // more than a single one did.
                 Haptics.cascade(selection.count)
             }
-            exitSelection()
+            selection.exit()
         }
     }
 
     private func deleteSelected() {
-        let ids = Array(selection)
+        let ids = Array(selection.ids)
         Haptics.thud()
-        exitSelection()
-        Task { for id in ids { await jobStore.deleteCompanyUpstream(id) } }
+        selection.exit()
+        Task { await jobStore.deleteCompanies(ids) }
     }
 
     private var emptyState: some View {
@@ -258,7 +281,7 @@ struct CompaniesView: View {
             } label: {
                 Label("Add Company", systemImage: "plus")
             }
-            .buttonStyle(.borderedProminent)
+            .primaryButton()
         }
     }
 
@@ -285,7 +308,7 @@ private struct CompanyRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            MonogramAvatar(text: job.company, systemImage: "building.2.fill")
+            MonogramAvatar(company: job.company)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
@@ -342,7 +365,7 @@ private struct CompanyRow: View {
         .foregroundStyle(.inkMuted)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(.secondary.opacity(0.15), in: Capsule())
+        .background(Color.inkMuted.opacity(0.15), in: Capsule())
         .fixedSize()
     }
 }

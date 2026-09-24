@@ -25,8 +25,15 @@ struct HomeView: View {
     @State private var undoJobs: [Job] = []
     @State private var undoTask: Task<Void, Never>?
     @State private var searchText = ""
+    @State private var isAddingContact = false
+    /// The companies a Send from the selection bar is choosing recipients at.
+    @State private var sendingTo: SendTarget?
+    @Namespace private var zoom
+    @State private var selection = ListSelection<String>()
 
     private var insights: Insights { jobStore.insights }
+
+    private static let quickActionsZoomID = "quick-actions"
 
     private var query: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -47,9 +54,9 @@ struct HomeView: View {
         NavigationStack(path: $path) {
             Group {
                 if jobStore.isLoading && jobStore.jobs.isEmpty && insights.totalSent == 0 {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    LoadingState()
                 } else {
-                    List {
+                    List(selection: $selection.ids) {
                         // Hidden while searching: the card is a summary of
                         // everything, which is the opposite of what a query asked
                         // for, and it would push the first result off the screen.
@@ -57,22 +64,19 @@ struct HomeView: View {
                             Section {
                                 Button { showingQuickActions = true } label: {
                                     QuickActionsCard(insights: insights, isSyncing: replySync.isSyncing)
+                                        .matchedTransitionSource(id: Self.quickActionsZoomID, in: zoom)
                                 }
                                 .cardButtonStyle()
-                                .listRowInsets(EdgeInsets(top: 6, leading: Theme.Space.gutter,
-                                                          bottom: 10, trailing: Theme.Space.gutter))
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
+                                .cardRow(top: 6, bottom: 10)
                             }
                         }
 
                         trackingSection
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.paper)
+                    .cardList()
                     .refreshable { await jobStore.load() }
                     .scrollDismissesKeyboard(.immediately)
+                    .selectionEditMode(selection.isSelecting)
                     // Rows springing in and out is the whole feedback for tracking
                     // and untracking — the list is where the change lands.
                     .animation(Theme.Motion.bouncy, value: jobStore.jobs.map(\.id))
@@ -82,24 +86,72 @@ struct HomeView: View {
                     .overlay {
                         if isSearching && filteredJobs.isEmpty {
                             ContentUnavailableView.search(text: query)
-                                .background(Color.paper)
+                                .paperScreen()
                         }
                     }
                 }
             }
+            .paperScreen()
             .navigationTitle("Home")
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $searchText, prompt: "Search tracked companies and people")
             .navigationDestination(for: String.self) { companyID in
+                // The card the user tapped grows into the company screen, and
+                // shrinks back into its place on the way out.
                 JobDetailView(jobID: companyID)
+                    .navigationTransition(.zoom(sourceID: companyID, in: zoom))
             }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if selection.isSelecting {
+                        DoneButton { selection.exit() }
+                    } else {
+                        Menu {
+                            Button { isAddingContact = true } label: {
+                                Label("Add Contact", systemImage: "person.crop.circle.badge.plus")
+                            }
+                            if !jobStore.jobs.isEmpty {
+                                Button { selection.enter() } label: {
+                                    Label("Select", systemImage: "checkmark.circle")
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                        .accessibilityLabel("More actions")
+                    }
+                }
+            }
+            .selectionActions(
+                isSelecting: selection.isSelecting,
+                count: selection.count,
+                noun: SelectionNoun(singular: "company", plural: "companies"),
+                sendableCount: selectedCompanies.reduce(0) { $0 + $1.validContacts.count },
+                onSend: { sendingTo = SendTarget(companies: selectedCompanies) },
+                bulkAction: SelectionBulkAction(
+                    title: "Untrack",
+                    systemImage: "pin.slash.fill"
+                ) {
+                    let selected = jobStore.jobs.filter { selection.contains($0.id) }
+                    selection.exit()
+                    remove(selected)
+                }
+            )
             .safeAreaInset(edge: .bottom) {
-                if !undoJobs.isEmpty { undoBar }
+                if !undoJobs.isEmpty && !selection.isSelecting { undoBar }
             }
             .sheet(isPresented: $showingQuickActions) {
+                // The card opens into the screen it summarises.
                 QuickActionsView()
+                    .navigationTransition(.zoom(sourceID: Self.quickActionsZoomID, in: zoom))
             }
+            .addContactSheet(isPresented: $isAddingContact)
+            .sendChooser(for: $sendingTo) { selection.exit() }
         }
+    }
+
+    private var selectedCompanies: [Job] {
+        jobStore.jobs.filter { selection.contains($0.id) }
     }
 
     // MARK: - Tracking
@@ -111,21 +163,19 @@ struct HomeView: View {
                 Text("No tracked companies yet. Track companies from the Companies tab.")
                     .font(.subheadline)
                     .foregroundStyle(.inkMuted)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                    .cardRow()
             } else {
                 ForEach(filteredJobs) { job in
-                    Button {
-                        path.append(job.id)
-                    } label: {
-                        TrackingCard(job: job)
-                    }
-                    .cardButtonStyle()
-                    .listRowInsets(EdgeInsets(top: 4, leading: Theme.Space.gutter,
-                                              bottom: 4, trailing: Theme.Space.gutter))
-                    // Untrack is reachable from either swipe direction.
-                    .swipeActions(edge: .trailing) { untrackButton(job) }
-                    .swipeActions(edge: .leading) { untrackButton(job) }
+                    TrackingCard(job: job)
+                        .matchedTransitionSource(id: job.id, in: zoom)
+                        .selectableRow(isSelecting: selection.isSelecting) {
+                            selection.begin(with: job.id)
+                        } onTap: {
+                            path.append(job.id)
+                        }
+                        .cardRow()
+                        .swipeActions(edge: .trailing) { untrackButton(job) }
+                        .swipeActions(edge: .leading) { untrackButton(job) }
                 }
             }
         } header: {
@@ -157,7 +207,7 @@ struct HomeView: View {
         // swipe, and it should feel unlike selecting the row it just removed.
         Haptics.thud()
         for job in jobs { jobStore.deleteJob(job) }
-        withAnimation(Theme.Motion.bouncy) { undoJobs = jobs }
+        withAnimation(Theme.Motion.liquid) { undoJobs = jobs }
         scheduleUndoDismiss()
     }
 
@@ -165,7 +215,7 @@ struct HomeView: View {
         undoTask?.cancel()
         Haptics.success()
         for job in undoJobs { jobStore.restoreJob(job) }
-        withAnimation(Theme.Motion.bouncy) { undoJobs = [] }
+        withAnimation(Theme.Motion.liquid) { undoJobs = [] }
     }
 
     private func scheduleUndoDismiss() {
@@ -175,7 +225,7 @@ struct HomeView: View {
             guard !Task.isCancelled else { return }
             // Silent on the way out. The bar timing out isn't something the user
             // did, and a knock here would read as a second thing happening.
-            withAnimation(Theme.Motion.bouncy) { undoJobs = [] }
+            withAnimation(Theme.Motion.liquid) { undoJobs = [] }
         }
     }
 
@@ -205,9 +255,7 @@ struct HomeView: View {
         // Scaled as well as moved: the capsule grows into place from just under
         // the edge rather than sliding up at full size, which is what makes it
         // read as a thing that arrived rather than a thing that was always there.
-        .transition(.move(edge: .bottom)
-            .combined(with: .scale(scale: 0.9, anchor: .bottom))
-            .combined(with: .opacity))
+        .transition(.glassRise)
     }
 }
 
@@ -323,7 +371,7 @@ private struct TrackingCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            MonogramAvatar(text: job.company, systemImage: "building.2.fill")
+            MonogramAvatar(company: job.company)
 
             // The chips sit on their own line rather than trailing the contact
             // count. Chips are intrinsically sized so they can't shrink, and on a

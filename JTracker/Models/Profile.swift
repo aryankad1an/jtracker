@@ -39,11 +39,11 @@ struct Profile: Codable {
     }
 }
 
-/// One "sent" record: this Gmail user sent a mail to this recruiter. Each send
-/// is its own row, so the same recruiter can have many (the send history).
+/// One "sent" record: this Gmail user sent a mail to this contact. Each send
+/// is its own row, so the same contact can have many (the send history).
 struct MailSend: Decodable, Identifiable {
     let id: String
-    let recruiterID: String
+    let contactID: String
     let sentAt: Date?
     let subject: String?
     let body: String?
@@ -73,7 +73,7 @@ struct MailSend: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
-        case recruiterID = "recruiter_id"
+        case contactID = "recruiter_id"
         case sentAt = "sent_at"
         case subject, body
         case gmailMessageID = "gmail_message_id"
@@ -89,7 +89,7 @@ struct MailSend: Decodable, Identifiable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
-        recruiterID = try c.decode(String.self, forKey: .recruiterID)
+        contactID = try c.decode(String.self, forKey: .contactID)
         sentAt = try c.decodeIfPresent(Date.self, forKey: .sentAt)
         subject = try c.decodeIfPresent(String.self, forKey: .subject)
         body = try c.decodeIfPresent(String.self, forKey: .body)

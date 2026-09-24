@@ -53,3 +53,21 @@ fastlane/test_output
 Secrets.swift
 .env
 .env.*
+
+cold_mail_sheet_unprocessed.csv
+
+# Processed cold mail sheets
+cold_mail_processed/
+
+# Local cache
+.cache/
+
+# Contact exports (personal data — never commit)
+master_cold_mail.csv
+
+# Competitive Programming Helper (editor extension) state
+.cph/
+
+# Supabase table dumps (personal data — never commit)
+db_backups/
+data_verification/

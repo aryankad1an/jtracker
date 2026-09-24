@@ -12,14 +12,22 @@ Google (Gmail) OAuth for sending mail.
 
 - **Companies & contacts** — track target companies and the recruiters/contacts
   at each one.
+- **Mail domains** — a company can have several (`stripe.com`, `stripe.dev`).
+  Adding a contact looks up their address's domain and suggests the company
+  already on file for it, so the same company isn't entered twice; a new work
+  domain is added to its company automatically.
 - **Cold mail via Gmail** — connect your Google account (OAuth + PKCE) and send
   mail on your own behalf through the Gmail API.
 - **Templates** — reusable subject/body templates with placeholders, rendered
   per contact before sending.
 - **Profile** — your details are merged into templates so mails are personalized
   automatically.
-- **Activity feed** — a per-send history that stays visible even after a company
-  drops off the Home list.
+- **Activity** — every mail sent, hung off a time axis and grouped by day, 50 at
+  a time, filterable by All / Replied / Waiting and by search. It stays complete
+  even after a company drops off the Home list.
+- **Templates** — cards that show each template as it reads, with its
+  placeholders highlighted, a ready / needs-attention badge from the editor's own
+  checks, duplicate and delete, and a one-tap example to start from.
 - **Invalid contacts** — mark a contact invalid when the address bounces or the
   person has left. They drop to their own group at the bottom of the company
   page, are never suggested, and can no longer be mailed — reversibly, and for
@@ -65,13 +73,15 @@ bounces are excluded on three different header signals — see `ReplySync`.
 
 ## Design
 
-The interface is warm and paper-like rather than the iOS default of neutral greys
-on white: an ivory ground, warm near-black ink, hairline rules, and a single clay
-accent. Two files hold all of it — `Support/Palette.swift` (colour and type) and
-`Support/DesignSystem.swift` (surfaces, metrics, chips, the selector) — so a
-screen never picks a colour or a corner radius of its own.
+The interface is black and drawn like a chart: a near-black ground ruled as
+faint graph paper (`GraphPaper`, behind every screen), light ink, hairline rules,
+and a single clay accent. The app forces dark appearance so system chrome
+matches. Two files hold all of it — `Support/Palette.swift` (colour and type) and
+`Support/DesignSystem.swift` (surfaces, metrics, chips, the selector, buttons,
+list chrome, selection mode) — so a screen never picks a colour, a corner radius
+or a list style of its own.
 
-Three rules the components encode:
+Four rules the components encode:
 
 - **One surface.** Anything raised is the same paper at the same radius behind
   the same hairline. Depth is a rule, not a shadow.
@@ -83,6 +93,12 @@ Three rules the components encode:
 - **Serif for titles and figures.** Navigation titles, the reply rate, and the
   day counts are set in the system serif; everything else is the system sans. A
   serif numeral among sans labels reads as a headline without being large.
+- **Content is paper, controls are glass.** Cards and rows stay paper; what
+  floats over them — selection and send bars, the undo and saving capsules,
+  buttons, the lane selector — is Liquid Glass. Glass arrives the way liquid
+  does: it condenses out of a blur rather than sliding in (`LiquidMotion.swift`),
+  tapping a card zooms it into its screen, and the splash is a graph seen
+  through a glass lens whose droplets fuse into it as the app loads.
 
 ## Requirements
 
@@ -109,6 +125,28 @@ Schema changes the app expects, newest first. Run them in the Supabase SQL
 editor; each is safe to re-run.
 
 ```sql
+-- Company mail domains (e.g. {stripe.com, stripe.dev}). A company can have
+-- several; the app adds a contact's work domain to its company automatically,
+-- and suggests the company from the domain when a contact is added. The
+-- backfill seeds each company with the work domains its contacts already use.
+alter table companies
+  add column if not exists domains text[] not null default '{}';
+create index if not exists companies_domains_idx on companies using gin (domains);
+update companies c
+set domains = sub.domains
+from (
+  select company_id, array_agg(distinct lower(split_part(email, '@', 2))) as domains
+  from recruiters
+  where email like '%@%.%'
+    and lower(split_part(email, '@', 2)) not in (
+      'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.in', 'ymail.com',
+      'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'icloud.com', 'me.com',
+      'mac.com', 'aol.com', 'proton.me', 'protonmail.com', 'rediffmail.com',
+      'zoho.com', 'gmx.com', 'mail.com', 'yandex.com')
+  group by company_id
+) sub
+where sub.company_id = c.id and c.domains = '{}';
+
 -- Per-contact greeting override: what goes after "Hi " when the name field
 -- can't produce it on its own ("A Bagarwal", a role mailbox). Null derives the
 -- greeting from the name and address instead.

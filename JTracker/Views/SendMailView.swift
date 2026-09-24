@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Compose and send cold mails: pick a template, choose one or more recipients
+/// Compose and send mails: pick a template, choose one or more recipients
 /// from the company's contacts, confirm, and send them all through the connected
 /// Gmail account. Successfully sent contacts are marked sent.
 struct SendMailView: View {
@@ -60,7 +60,7 @@ struct SendMailView: View {
                     id: contact.id,
                     contact: contact,
                     company: job.company,
-                    name: contact.name.isEmpty ? contact.email : contact.name,
+                    name: contact.displayName,
                     email: contact.email,
                     subject: context.fill(template.subject),
                     body: context.fill(template.content),
@@ -133,7 +133,7 @@ struct SendMailView: View {
     private func recipientRow(_ contact: Contact) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(contact.name.isEmpty ? contact.email : contact.name)
+                Text(contact.displayName)
                     .foregroundStyle(.ink)
                     .lineLimit(1)
                 // Skipped when the name is already the address, which otherwise
@@ -446,7 +446,7 @@ struct MailPreviewView: View {
                 .fontWeight(.semibold)
                 .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .primaryButton()
             .controlSize(.large)
             .padding()
             .animation(Theme.Motion.pop, value: previews.count)

@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import UIKit
 
-/// Sends cold mails in the background, one at a time, spaced out.
+/// Sends mails in the background, one at a time, spaced out.
 ///
 /// Sending used to happen inside the send sheet: you tapped Send All and then sat
 /// on a progress bar until the last mail went out, unable to use the app, and a
@@ -146,7 +146,7 @@ final class MailQueue {
             let mail = pending.removeFirst()
             do {
                 // No transport means nothing was delivered. Recording these as
-                // sent would mark a whole batch of recruiters as mailed without a
+                // sent would mark a whole batch of contacts as mailed without a
                 // single mail leaving the account.
                 guard let sender else { throw MailQueueError.noTransport }
                 let delivery = try await sender(mail, fromName)

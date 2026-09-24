@@ -1,10 +1,20 @@
 import SwiftUI
 
-/// Compose and send cold mails to Home's "Suggested" list — contacts spread
+/// One request to open `SuggestedSendView`, so `.sheet(item:)` builds a fresh
+/// compose screen per batch.
+struct SendBatch: Identifiable {
+    let id = UUID()
+    /// What the compose screen is titled — which group this is.
+    var title = "Send to All"
+    let recipients: [(contact: Contact, company: String)]
+}
+
+/// Compose and send mails to Home's "Suggested" list — contacts spread
 /// across many companies that haven't been mailed in the last month. Pick one
 /// template, review the rendered deck, and send them all through Gmail. Mirrors
 /// `SendMailView`, but its recipients span companies rather than one.
 struct SuggestedSendView: View {
+    var title = "Send to All"
     let recipients: [(contact: Contact, company: String)]
     /// Called instead of the local `dismiss()` once every mail sends
     /// successfully, so the presenter can also close the selection view
@@ -23,7 +33,9 @@ struct SuggestedSendView: View {
     /// A snapshot of the rendered mails the review screen can tailor per card.
     @State private var editablePreviews: [MailPreview] = []
 
-    init(recipients: [(contact: Contact, company: String)], onSent: (() -> Void)? = nil) {
+    init(title: String = "Send to All", recipients: [(contact: Contact, company: String)],
+         onSent: (() -> Void)? = nil) {
+        self.title = title
         self.recipients = recipients
         self.onSent = onSent
         _selection = State(initialValue: Set(recipients.map(\.contact.id)))
@@ -50,7 +62,7 @@ struct SuggestedSendView: View {
                     id: item.contact.id,
                     contact: item.contact,
                     company: item.company,
-                    name: item.contact.name.isEmpty ? item.contact.email : item.contact.name,
+                    name: item.contact.displayName,
                     email: item.contact.email,
                     subject: context.fill(template.subject),
                     body: context.fill(template.content),
@@ -96,7 +108,7 @@ struct SuggestedSendView: View {
                     Text("Recipients (\(selection.count) selected)")
                 }
             }
-            .navigationTitle("Send to All")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -123,7 +135,7 @@ struct SuggestedSendView: View {
     private func recipientRow(_ contact: Contact, company: String) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(contact.name.isEmpty ? contact.email : contact.name)
+                Text(contact.displayName)
                     .foregroundStyle(.ink)
                 Text("\(company) · \(contact.email)")
                     .font(.caption)

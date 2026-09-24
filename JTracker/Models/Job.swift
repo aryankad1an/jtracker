@@ -1,7 +1,7 @@
 import Foundation
 
-/// A cold-mail outreach entry inside a company, backed by a Supabase
-/// `recruiters` row. `id` is the row's UUID (empty for a not-yet-saved draft).
+/// A person at a company, backed by a Supabase `recruiters` row. `id` is the
+/// row's UUID (empty for a not-yet-saved draft).
 struct Contact: Identifiable, Decodable {
     var id: String = ""
 
@@ -16,18 +16,18 @@ struct Contact: Identifiable, Decodable {
     /// need one. See `greeting`.
     var greetingName: String?
     /// False when the address bounces or the person has left the company. Part of
-    /// the shared recruiter row, not per-user: a dead address is dead for everyone.
+    /// the shared contact row, not per-user: a dead address is dead for everyone.
     /// Invalid contacts are never suggested and can't be mailed — see
     /// `JobStore.setValidity`.
     var isValid = true
     // Sent state is per-user (from `mail_sends`), overlaid after decoding —
-    // never part of the shared recruiter row.
+    // never part of the shared contact row.
     var isSent = false
     var sentAt: Date?        // when it was sent
     var sentSubject: String? // the rendered subject that went out
     var sentBody: String?    // the rendered body that went out
     /// Reply state for the latest send, overlaid from `mail_sends` alongside the
-    /// sent state above. Per-user for the same reason: whether a recruiter wrote
+    /// sent state above. Per-user for the same reason: whether a contact wrote
     /// back is a fact about this user's mailbox, not about the shared contact.
     var repliedAt: Date?
     var replyFrom: String?
@@ -69,6 +69,18 @@ struct Contact: Identifiable, Decodable {
         return override.isEmpty ? RecipientName.greeting(name: name, email: email) : override
     }
 
+    /// What to call this contact on screen: their name, or their address when
+    /// the row has no name.
+    var displayName: String { name.isEmpty ? email : name }
+
+    /// Whether this contact answers a (trimmed, non-empty) search — by name,
+    /// address or position. `Job.matches` runs the same test over its people.
+    func matches(_ query: String) -> Bool {
+        name.localizedCaseInsensitiveContains(query)
+            || email.localizedCaseInsensitiveContains(query)
+            || position.localizedCaseInsensitiveContains(query)
+    }
+
     /// Whether this contact wrote back to the last mail we sent them.
     var hasReplied: Bool { repliedAt != nil }
 
@@ -99,8 +111,8 @@ struct SentMail {
 }
 
 /// One entry in the Activity feed: a single mail the user sent, with the
-/// recruiter, company name, and that send's subject/body/date. One per send (so
-/// repeat sends to the same recruiter are separate rows). Built from the send
+/// contact, company name, and that send's subject/body/date. One per send (so
+/// repeat sends to the same contact are separate rows). Built from the send
 /// history directly, so it stays visible even after the company leaves Home.
 struct ActivityEntry: Identifiable {
     let id: String        // the send's id (unique per send)
@@ -109,27 +121,33 @@ struct ActivityEntry: Identifiable {
     var date: Date? { contact.sentAt }
 }
 
-/// One company the user is tracking, backed by a Supabase `companies` row, with
-/// its cold mails (recruiters).
+/// One company in the catalog, backed by a Supabase `companies` row, with its
+/// contacts (the embedded `recruiters` rows).
 struct Job: Identifiable, Decodable {
     var id: String = ""
     var company: String
-    /// The company's sector/industry, when known. Only fetched for the full
-    /// catalog (the Companies list); nil on the tracked-companies query.
+    /// The company's sector/industry, when known.
     var sector: String?
+    /// Mail domains this company is known by, set on the company row. A company
+    /// can have several (a rebrand, a regional domain, an acquired team's), and
+    /// the list grows on its own as contacts are added — see
+    /// `JobStore.addContact`. Empty until the `domains` migration has run.
+    var domains: [String] = []
     var contacts: [Contact] = []
 
     enum CodingKeys: String, CodingKey {
         case id
         case company = "name"
         case sector
+        case domains
         case contacts = "recruiters"
     }
 
-    init(id: String, company: String, sector: String? = nil, contacts: [Contact] = []) {
+    init(id: String, company: String, sector: String? = nil, domains: [String] = [], contacts: [Contact] = []) {
         self.id = id
         self.company = company
         self.sector = sector
+        self.domains = domains
         self.contacts = contacts
     }
 
@@ -138,10 +156,29 @@ struct Job: Identifiable, Decodable {
         id = try c.decode(String.self, forKey: .id)
         company = try c.decode(String.self, forKey: .company)
         sector = try c.decodeIfPresent(String.self, forKey: .sector)
+        domains = (try c.decodeIfPresent([String].self, forKey: .domains) ?? []).compactMap(MailDomain.clean)
         contacts = try c.decodeIfPresent([Contact].self, forKey: .contacts) ?? []
     }
 
-    /// The cold mails still worth sending, and the ones marked invalid. The company
+    /// Work domains seen on this company's contacts' addresses, most common first.
+    var contactDomains: [String] {
+        var counts: [String: Int] = [:]
+        for contact in contacts {
+            if let domain = MailDomain.work(fromEmail: contact.email) { counts[domain, default: 0] += 1 }
+        }
+        return counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.map(\.key)
+    }
+
+    /// Every domain this company answers to: the ones set on the row, then any
+    /// its contacts use that aren't listed yet.
+    var allDomains: [String] {
+        domains + contactDomains.filter { !domains.contains($0) }
+    }
+
+    /// The company's main mail domain (e.g. "stripe.com"), or "" when unknown.
+    var mailDomain: String { allDomains.first ?? "" }
+
+    /// The contacts still worth sending, and the ones marked invalid. The company
     /// screen shows them as two groups and only ever mails the first.
     var validContacts: [Contact] { contacts.filter(\.isValid) }
     var invalidContacts: [Contact] { contacts.filter { !$0.isValid } }
@@ -152,7 +189,7 @@ struct Job: Identifiable, Decodable {
     var awaitingContacts: [Contact] { contacts.filter { $0.isSent && !$0.hasReplied } }
 
     /// Whether this company answers a search box. Matching runs over the people
-    /// inside as well as the company itself, so a half-remembered recruiter's name
+    /// inside as well as the company itself, so a half-remembered contact's name
     /// finds the company you'd have to have remembered to find them — the same
     /// predicate on Home and in the catalog, so a query that works on one screen
     /// works on the other.
@@ -163,10 +200,74 @@ struct Job: Identifiable, Decodable {
         guard !query.isEmpty else { return false }
         if company.localizedCaseInsensitiveContains(query) { return true }
         if sector?.localizedCaseInsensitiveContains(query) == true { return true }
-        return contacts.contains { contact in
-            contact.name.localizedCaseInsensitiveContains(query)
-                || contact.email.localizedCaseInsensitiveContains(query)
-                || contact.position.localizedCaseInsensitiveContains(query)
+        if domains.contains(where: { $0.localizedCaseInsensitiveContains(query) }) { return true }
+        return contacts.contains { $0.matches(query) }
+    }
+}
+
+extension Array where Element == Contact {
+    /// Alphabetical by what each contact is called on screen.
+    func sortedByName() -> [Contact] {
+        sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+}
+
+extension Array where Element == Job {
+    /// Alphabetical by company name, the order every company list shows.
+    func sortedByName() -> [Job] {
+        sorted { $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedAscending }
+    }
+
+    /// The companies from any of `sources` that match `query`, each once, by
+    /// name — how a search over loaded pages and server hits is shown.
+    static func matching(_ query: String, in sources: [Job]...) -> [Job] {
+        var seen = Set<String>()
+        return sources.joined()
+            .filter { $0.matches(query) && seen.insert($0.id).inserted }
+            .sortedByName()
+    }
+}
+
+/// Mail-domain rules shared by the company form, the contact form and the
+/// store, so "is this the same company?" is answered the same way everywhere.
+enum MailDomain {
+    /// Reduce whatever was typed or pasted — a URL, "@stripe.com", someone's
+    /// address — to a bare, lowercased domain. Nil when what's left isn't one.
+    nonisolated static func clean(_ raw: String) -> String? {
+        var d = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for scheme in ["https://", "http://"] where d.hasPrefix(scheme) { d.removeFirst(scheme.count) }
+        if let cut = d.firstIndex(where: { "/?#".contains($0) }) { d = String(d[..<cut]) }
+        if let at = d.lastIndex(of: "@") { d = String(d[d.index(after: at)...]) }
+        if d.hasPrefix("www.") { d.removeFirst(4) }
+        while d.hasSuffix(".") { d.removeLast() }
+        return isWellFormed(d) ? d : nil
+    }
+
+    /// The company domain of an address, or nil for a personal mailbox (a Gmail
+    /// address says nothing about where someone works) or a malformed one.
+    nonisolated static func work(fromEmail email: String) -> String? {
+        guard email.contains("@"), let domain = clean(email), !isPersonal(domain) else { return nil }
+        return domain
+    }
+
+    nonisolated static func isPersonal(_ domain: String) -> Bool {
+        personalDomains.contains(domain)
+    }
+
+    /// Letters, digits, dots and hyphens, with at least one dot and no empty
+    /// labels. Also what keeps a domain safe to put inside a PostgREST filter.
+    nonisolated static func isWellFormed(_ domain: String) -> Bool {
+        let labels = domain.split(separator: ".", omittingEmptySubsequences: false)
+        return domain.count <= 253 && labels.count >= 2 && labels.allSatisfy { label in
+            !label.isEmpty && !label.hasPrefix("-") && !label.hasSuffix("-")
+                && label.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
         }
     }
+
+    nonisolated private static let personalDomains: Set<String> = [
+        "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.in", "ymail.com",
+        "outlook.com", "hotmail.com", "live.com", "msn.com", "icloud.com", "me.com",
+        "mac.com", "aol.com", "proton.me", "protonmail.com", "rediffmail.com",
+        "zoho.com", "gmx.com", "mail.com", "yandex.com"
+    ]
 }

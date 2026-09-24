@@ -35,7 +35,7 @@ extension Color {
     /// rows running. Swift's own `hashValue` isn't an option, since it's seeded per
     /// process and would repaint every avatar on each launch.
     /// The palette is muted on purpose. Saturated system colours turned a list of
-    /// recruiters into a bag of sweets and drowned the two colours that carry
+    /// contacts into a bag of sweets and drowned the two colours that carry
     /// meaning here — clay for actions, olive for replies. These are desaturated
     /// enough to sit under the accent while still telling two rows apart, and
     /// mid-toned enough to hold white text in either appearance.
@@ -81,13 +81,13 @@ extension String {
     ///
     /// Gmail's `snippet` is HTML — it comes out of the message body, so an
     /// apostrophe arrives as `&#39;` and an ampersand as `&amp;`. Shown raw, a
-    /// recruiter's "We've noted your profile" reads as "We&#39;ve noted", which
+    /// contact's "We've noted your profile" reads as "We&#39;ve noted", which
     /// looks like the app is broken rather than like a quote.
     ///
     /// Deliberately a small table plus numeric references rather than
     /// `NSAttributedString(html:)`: that initialiser spins up WebKit, must run on
     /// the main actor, and is far too heavy for one line of preview text.
-    var htmlUnescaped: String {
+    nonisolated var htmlUnescaped: String {
         guard contains("&") else { return self }
 
         let named = ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",

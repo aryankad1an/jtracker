@@ -3,61 +3,55 @@ import UIKit
 
 /// The app's colours, in one place.
 ///
-/// The palette is warm and paper-like rather than the iOS default of neutral
-/// greys on white: an ivory ground, near-black warm ink, hairline rules in a
-/// warm grey, and a single clay accent that carries every action. Colour is
-/// scarce on purpose — when almost nothing is coloured, the one thing that is
-/// (a reply, a warning, the accent on a button) is read first.
+/// Black, like a chart on a trading terminal: a near-black ground, cards one
+/// step up, light ink, hairline rules — and a single clay accent that carries
+/// every action. Colour is scarce on purpose: when almost nothing is coloured,
+/// the one thing that is (a reply, a warning, the accent on a button) is read
+/// first. `grid` is the faint graph-paper rule the whole app is drawn on.
 ///
-/// Dark mode is a warm near-black rather than pure black, so the same ink and
-/// clay stay recognisable instead of turning into a different app at night.
+/// There is one appearance. The app forces dark (`RootView`), so system chrome
+/// — sheets, alerts, keyboards, glass — agrees with these values everywhere.
 enum Palette {
 
     // MARK: - Ground and surfaces
 
     /// The page. Everything else sits on this.
-    static let paper = dynamic(light: 0xF0EEE6, dark: 0x262624)
+    static let paper = Color(hex: 0x09090B)
 
     /// A raised surface: cards, panels, rows.
-    static let paperRaised = dynamic(light: 0xFAF9F5, dark: 0x30302E)
+    static let paperRaised = Color(hex: 0x151518)
 
-    /// A recessed surface: the trough of a control, a segmented track.
-    static let paperSunken = dynamic(light: 0xE7E4DA, dark: 0x1F1E1D)
+    /// A recessed surface: the trough of a control, a segmented track. Lighter
+    /// than the ground, not darker — on black, a well has to be lit to be seen.
+    static let paperSunken = Color(hex: 0x1C1C20)
 
     // MARK: - Ink
 
-    /// Primary text. Warm near-black, never pure #000.
-    static let ink = dynamic(light: 0x1A1A17, dark: 0xF5F4EE)
+    /// Primary text.
+    static let ink = Color(hex: 0xF4F4F5)
     /// Secondary text: captions, subtitles, the second line of a row.
-    static let inkMuted = dynamic(light: 0x6B6A62, dark: 0xA8A69C)
+    static let inkMuted = Color(hex: 0x9D9DA6)
     /// Tertiary text: chevrons, timestamps, anything you should be able to ignore.
-    static let inkFaint = dynamic(light: 0x9C9A8E, dark: 0x7C7A72)
+    static let inkFaint = Color(hex: 0x62626B)
 
     /// Hairline rules and card borders. Carries structure so shadows don't have to.
-    static let hairline = dynamic(light: 0xE0DCD1, dark: 0x413F3B)
+    static let hairline = Color(hex: 0x27272C)
+
+    /// Graph-paper rules behind every screen and inside every chart.
+    static let grid = Color(hex: 0x17171B)
 
     // MARK: - Accent and status
 
-    /// The one accent: Claude's clay. Buttons, selection, the active state.
-    static let clay = dynamic(light: 0xC15F3C, dark: 0xD97757)
-    /// A reply landed. A muted olive — legible against clay without competing.
-    static let olive = dynamic(light: 0x5A7A55, dark: 0x93B189)
+    /// The one accent: clay. Buttons, selection, the active state, the curve.
+    static let clay = Color(hex: 0xE8794F)
+    /// A reply landed.
+    static let olive = Color(hex: 0x8CC47E)
     /// Sent, waiting, in progress. Cool enough to read as neutral beside clay.
-    static let slate = dynamic(light: 0x5D7086, dark: 0x9BAEC6)
+    static let slate = Color(hex: 0x8EA8CC)
     /// Set aside or needs attention: bounced, invalid, unmigrated.
-    static let kraft = dynamic(light: 0xA1743C, dark: 0xD4A27F)
-    /// Destructive and broken: delete, a template that won't render, a silence
-    /// long past the point of following up. A warm red, so it belongs to the
-    /// palette rather than arriving from the system.
-    static let danger = dynamic(light: 0xB0453A, dark: 0xE08472)
-
-    /// Build a colour that resolves per appearance. Hex is spelled out rather
-    /// than named so the palette can be diffed against the brand values directly.
-    fileprivate static func dynamic(light: UInt32, dark: UInt32) -> Color {
-        Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light)
-        })
-    }
+    static let kraft = Color(hex: 0xE0AA6E)
+    /// Destructive and broken: delete, a template that won't render.
+    static let danger = Color(hex: 0xF0705F)
 }
 
 /// The palette as `Color` members, so `Color.clay` reads naturally in a fill.
@@ -69,6 +63,7 @@ extension Color {
     static var inkMuted: Color { Palette.inkMuted }
     static var inkFaint: Color { Palette.inkFaint }
     static var hairline: Color { Palette.hairline }
+    static var grid: Color { Palette.grid }
     static var clay: Color { Palette.clay }
     static var olive: Color { Palette.olive }
     static var slate: Color { Palette.slate }
@@ -89,6 +84,7 @@ extension ShapeStyle where Self == Color {
     static var inkMuted: Color { Palette.inkMuted }
     static var inkFaint: Color { Palette.inkFaint }
     static var hairline: Color { Palette.hairline }
+    static var grid: Color { Palette.grid }
     static var clay: Color { Palette.clay }
     static var olive: Color { Palette.olive }
     static var slate: Color { Palette.slate }
@@ -96,23 +92,13 @@ extension ShapeStyle where Self == Color {
     static var danger: Color { Palette.danger }
 }
 
-extension UIColor {
-    /// A UIColor that resolves per appearance, for the UIKit surfaces SwiftUI
-    /// still draws. Kept in step with `Color`'s values by hand — there are only
-    /// two, and both are named at the one call site.
-    static func dynamic(light: UInt32, dark: UInt32) -> UIColor {
-        UIColor { traits in
-            traits.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light)
-        }
-    }
-
-    convenience init(hex: UInt32) {
-        self.init(
-            red: CGFloat((hex >> 16) & 0xFF) / 255,
-            green: CGFloat((hex >> 8) & 0xFF) / 255,
-            blue: CGFloat(hex & 0xFF) / 255,
-            alpha: 1
-        )
+extension Color {
+    /// A colour from its hex value, spelled out so the palette can be diffed
+    /// against design values directly.
+    init(hex: UInt32) {
+        self.init(red: Double((hex >> 16) & 0xFF) / 255,
+                  green: Double((hex >> 8) & 0xFF) / 255,
+                  blue: Double(hex & 0xFF) / 255)
     }
 }
 

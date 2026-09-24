@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// The editor is built around one idea: a template is never wrong on its own —
 /// it's wrong against *your* profile and *your* contacts, and you only find out
-/// after the mail has gone to a hundred recruiters. So the two halves of the
+/// after the mail has gone to a hundred contacts. So the two halves of the
 /// screen answer that directly. **Write** is a full-height composer with the
 /// placeholder chips on the keyboard, where a status strip flags tokens that
 /// aren't real, tokens your profile can't fill, and tokens your contacts are
@@ -107,7 +107,7 @@ struct TemplateEditorView: View {
                 case .preview: previewPane
                 }
             }
-            .background(Color.paper)
+            .paperScreen()
             .navigationTitle(existing == nil ? "New Template" : "Edit Template")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
@@ -123,14 +123,9 @@ struct TemplateEditorView: View {
                 Button("Save Anyway") { commit() }
                 Button("Keep Editing", role: .cancel) { showingIssues = true }
             } message: {
-                Text("Text that isn't a real placeholder is sent to recruiters exactly as written.")
+                Text("Text that isn't a real placeholder is sent to contacts exactly as written.")
             }
-            .alert("Test Mail", isPresented: Binding(get: { testSendResult != nil },
-                                                     set: { if !$0 { testSendResult = nil } })) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(testSendResult ?? "")
-            }
+            .messageAlert("Test Mail", message: testSendResult) { testSendResult = nil }
             // A test send goes out to Gmail and back; the result lands after the
             // user has stopped watching the button.
             .sensoryFeedback(trigger: testSendResult != nil) { _, landed in
@@ -196,7 +191,7 @@ struct TemplateEditorView: View {
                 Divider().padding(.leading, 14)
                 fieldRow("Subject") {
                     // Vertical axis so a long subject wraps instead of scrolling
-                    // out of sight — a cold mail's subject carries the credentials
+                    // out of sight — a mail's subject carries the credentials
                     // and you need to read all of it while editing.
                     TextField("Subject", text: $subject, selection: $subjectSelection,
                               axis: .vertical)
@@ -289,10 +284,10 @@ struct TemplateEditorView: View {
 
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 10) {
-                        MonogramAvatar(text: sample.contact.name.isEmpty ? sample.contact.email : sample.contact.name,
+                        MonogramAvatar(text: sample.contact.displayName,
                                        size: Theme.Avatar.small)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(sample.contact.name.isEmpty ? sample.contact.email : sample.contact.name)
+                            Text(sample.contact.displayName)
                                 .font(.subheadline.weight(.semibold))
                                 .lineLimit(1)
                             Text(sample.contact.email)
@@ -352,7 +347,7 @@ struct TemplateEditorView: View {
                 .font(.subheadline.weight(.semibold))
                 .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
+            .secondaryButton()
             .controlSize(.large)
             .disabled(!gmail.isConnected || !isValid || isTestSending)
 
@@ -380,7 +375,7 @@ struct TemplateEditorView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "person.crop.circle")
-                // Two lines rather than one: recruiter names run long, and at
+                // Two lines rather than one: contact names run long, and at
                 // larger text sizes a single line clips the very name it's
                 // telling you about.
                 Text("Previewing as \(displayName(sample.contact))")
@@ -396,7 +391,7 @@ struct TemplateEditorView: View {
     }
 
     private func displayName(_ contact: Contact) -> String {
-        contact.name.isEmpty ? contact.email : contact.name
+        contact.displayName
     }
 
     /// Side by side when there's room, stacked when there isn't — at larger text
@@ -425,7 +420,7 @@ struct TemplateEditorView: View {
         }
     }
 
-    /// Render a template string the way the recruiter will receive it, but with
+    /// Render a template string the way the contact will receive it, but with
     /// the seams left visible: substituted values are tinted, and anything that
     /// resolves to nothing becomes a labelled red marker instead of collapsing
     /// into an invisible gap. The marker is the whole point — an empty position
@@ -562,7 +557,7 @@ struct TemplateEditorView: View {
             if let token = finding.token, let suggestion = finding.suggestion {
                 Button("Fix") { replace(token, with: suggestion) }
                     .font(.caption.weight(.semibold))
-                    .buttonStyle(.borderedProminent)
+                    .primaryButton()
                     .controlSize(.small)
             }
         }
@@ -628,7 +623,7 @@ struct TemplateEditorView: View {
 
     /// Send the previewed render to the signed-in account. Nothing else in the
     /// app shows what actually lands — line breaks, subject truncation, whether
-    /// the resume link is clickable — until it's already gone to a recruiter.
+    /// the resume link is clickable — until it's already gone to a contact.
     private func sendTest() async {
         guard let address = gmail.connectedEmail else { return }
         isTestSending = true
@@ -642,7 +637,7 @@ struct TemplateEditorView: View {
                 body: context.fill(content),
                 fromName: profileStore.profile.name
             )
-            testSendResult = "Sent to \(address). Open it on your phone to see exactly what a recruiter gets."
+            testSendResult = "Sent to \(address). Open it on your phone to see exactly what a contact gets."
         } catch {
             testSendResult = error.localizedDescription
         }

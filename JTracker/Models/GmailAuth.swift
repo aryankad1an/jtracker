@@ -23,6 +23,7 @@ final class GmailAuthStore: NSObject, ASWebAuthenticationPresentationContextProv
     private struct Stored: Codable { var email: String }
 
     @ObservationIgnored private var webSession: ASWebAuthenticationSession?
+    @ObservationIgnored private let tokenVault = TokenVault()
 
     override init() {
         super.init()
@@ -44,6 +45,7 @@ final class GmailAuthStore: NSObject, ASWebAuthenticationPresentationContextProv
 
             if let refresh = tokens.refresh_token {
                 Keychain.set(refresh, for: Self.refreshTokenKey)
+                await tokenVault.clear()
             }
             let email = tokens.id_token.flatMap(Self.email(fromIDToken:)) ?? "Connected"
             connectedEmail = email
@@ -59,6 +61,7 @@ final class GmailAuthStore: NSObject, ASWebAuthenticationPresentationContextProv
         Keychain.set(nil, for: Self.refreshTokenKey)
         file.delete()
         connectedEmail = nil
+        Task { await tokenVault.clear() }
     }
 
     // MARK: - Sending
@@ -142,29 +145,13 @@ final class GmailAuthStore: NSObject, ASWebAuthenticationPresentationContextProv
         return .server(body)
     }
 
-    /// Trade the stored refresh token for a short-lived access token.
+    /// Trade the stored refresh token for a short-lived access token, reusing
+    /// a cached token while still valid to prevent redundant round-trips.
     private func accessToken() async throws -> String {
         guard let refresh = Keychain.get(Self.refreshTokenKey) else {
             throw GmailAuthError.notConnected
         }
-        var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-
-        var body = URLComponents()
-        body.queryItems = [
-            URLQueryItem(name: "client_id", value: AppConfig.googleClientID),
-            URLQueryItem(name: "refresh_token", value: refresh),
-            URLQueryItem(name: "grant_type", value: "refresh_token")
-        ]
-        request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw GmailAuthError.server(String(data: data, encoding: .utf8) ?? "Couldn't refresh Google session.")
-        }
-        struct Refreshed: Decodable { let access_token: String }
-        return try JSONDecoder().decode(Refreshed.self, from: data).access_token
+        return try await tokenVault.getToken(refreshToken: refresh, clientID: AppConfig.googleClientID)
     }
 
     /// Build a base64url-encoded RFC 2822 message for the Gmail API's `raw` field.
@@ -267,9 +254,11 @@ final class GmailAuthStore: NSObject, ASWebAuthenticationPresentationContextProv
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         // The system always calls this on the main thread.
         MainActor.assumeIsolated {
-            let scene = UIApplication.shared.connectedScenes
-                .first { $0.activationState == .foregroundActive } as? UIWindowScene
-            return scene?.keyWindow ?? ASPresentationAnchor()
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first else {
+                preconditionFailure("Sign-in was started with no window on screen.")
+            }
+            return scene.keyWindow ?? ASPresentationAnchor(windowScene: scene)
         }
     }
 
@@ -326,5 +315,79 @@ private extension Data {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
+    }
+}
+
+// MARK: - Token Vault
+
+/// Thread-safe in-memory cache for the short-lived OAuth access token.
+///
+/// Refreshes only when expired or within a 60-second safety cushion, and deduplicates
+/// concurrent refresh calls so a chunk of requests never causes a token stampede.
+private actor TokenVault {
+    private var cachedToken: String?
+    private var expiresAt: Date = .distantPast
+    private var refreshTask: Task<String, Error>?
+    /// Bumped by `clear()`. A refresh that was already in flight when the account
+    /// was disconnected or switched must not land its token afterwards — that
+    /// would send mail from the old account.
+    private var generation = 0
+
+    func getToken(refreshToken: String, clientID: String) async throws -> String {
+        if let cachedToken, Date().addingTimeInterval(60) < expiresAt {
+            return cachedToken
+        }
+        if let ongoing = refreshTask {
+            return try await ongoing.value
+        }
+        let startedGeneration = generation
+        let task = Task { () -> String in
+            let requestedAt = Date()
+            defer { finishRefresh(generation: startedGeneration) }
+            let refreshed = try await Self.performRefresh(refreshToken: refreshToken, clientID: clientID)
+            if generation == startedGeneration {
+                cachedToken = refreshed.access_token
+                expiresAt = requestedAt.addingTimeInterval(TimeInterval(refreshed.expires_in ?? 3600))
+            }
+            return refreshed.access_token
+        }
+        refreshTask = task
+        return try await task.value
+    }
+
+    private func finishRefresh(generation finished: Int) {
+        if generation == finished { refreshTask = nil }
+    }
+
+    func clear() {
+        generation += 1
+        cachedToken = nil
+        expiresAt = .distantPast
+        refreshTask = nil
+    }
+
+    private struct Refreshed: Decodable {
+        let access_token: String
+        let expires_in: Int?
+    }
+
+    private static func performRefresh(refreshToken: String, clientID: String) async throws -> Refreshed {
+        var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+
+        var body = URLComponents()
+        body.queryItems = [
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "refresh_token", value: refreshToken),
+            URLQueryItem(name: "grant_type", value: "refresh_token")
+        ]
+        request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw GmailAuthError.server(String(data: data, encoding: .utf8) ?? "Couldn't refresh Google session.")
+        }
+        return try JSONDecoder().decode(Refreshed.self, from: data)
     }
 }

@@ -52,15 +52,22 @@ final class TemplateStore {
         }
     }
 
-    func delete(_ template: MailTemplate) async {
-        guard let email else { return }
+    /// Delete templates in one request and one refetch.
+    func delete(_ doomed: [MailTemplate]) async {
+        guard let email, !doomed.isEmpty else { return }
         inFlight += 1
         defer { inFlight -= 1 }
         do {
-            try await SupabaseAPI.deleteTemplate(id: template.id)
+            try await SupabaseAPI.deleteTemplates(ids: doomed.map(\.id))
             templates = try await SupabaseAPI.fetchTemplates(userEmail: email)
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Save a copy under a new id, named so it's clearly the copy.
+    func duplicate(_ template: MailTemplate) async {
+        await save(MailTemplate(name: template.name + " copy", subject: template.subject,
+                                content: template.content))
     }
 }

@@ -67,7 +67,7 @@ struct SendQueueBar: View {
             // "working" while hiding how far along a long batch actually is.
             ZStack {
                 Circle()
-                    .stroke(Color.primary.opacity(0.15), lineWidth: 2.5)
+                    .stroke(Color.ink.opacity(0.15), lineWidth: 2.5)
                 Circle()
                     .trim(from: 0, to: max(queue.progress, 0.02))
                     .stroke(Color.accentColor,
@@ -76,15 +76,15 @@ struct SendQueueBar: View {
             }
             .frame(width: 21, height: 21)
             .animation(Theme.Motion.settle, value: queue.progress)
-            .transition(.scale(scale: 0.5).combined(with: .opacity))
+            .transition(LiquidMaterialize(scale: 0.5, blur: 4))
         } else if let outcome = queue.outcome {
             Image(systemName: outcome.failed.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .font(.title3)
-                .foregroundStyle(outcome.failed.isEmpty ? Color.statusDone : .orange)
+                .foregroundStyle(outcome.failed.isEmpty ? Color.statusDone : Color.statusInvalid)
                 // The tick replaces the progress ring in the same 21pt slot, so
                 // it springs in rather than swapping — the run visibly finishes.
                 .symbolEffect(.bounce, value: outcome.sent)
-                .transition(.scale(scale: 0.4).combined(with: .opacity))
+                .transition(LiquidMaterialize(scale: 0.4, blur: 4))
         }
     }
 
@@ -117,7 +117,7 @@ struct SendQueueBar: View {
                 Text("Stop")
                     .font(.caption.weight(.semibold))
             }
-            .buttonStyle(.bordered)
+            .secondaryButton()
             .controlSize(.small)
         } else if queue.outcome != nil {
             Button {

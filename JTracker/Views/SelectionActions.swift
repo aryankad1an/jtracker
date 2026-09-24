@@ -13,7 +13,7 @@ extension View {
     /// The standard multi-select chrome shared by every list screen: a bottom
     /// action bar (shown while `isSelecting`) and the delete confirmation dialog.
     /// - Parameter deleteMessage: overrides the default warning copy for lists
-    ///   whose delete cascades (e.g. removing a company drops its cold mails too).
+    ///   whose delete cascades (e.g. removing a company drops its mails too).
     /// - Parameter onSend: when provided, a "Send" button appears in the bar
     ///   alongside delete (used by lists whose items can be mailed).
     /// - Parameter confirmsDelete: when false, the Delete button runs `onDelete`
@@ -32,14 +32,14 @@ extension View {
         isSelecting: Bool,
         count: Int,
         noun: SelectionNoun,
-        confirmingDelete: Binding<Bool>,
+        confirmingDelete: Binding<Bool> = .constant(false),
         deleteMessage: String? = nil,
         confirmsDelete: Bool = true,
         deletableCount: Int? = nil,
         sendableCount: Int? = nil,
         onSend: (() -> Void)? = nil,
         bulkAction: SelectionBulkAction? = nil,
-        onDelete: @escaping () -> Void
+        onDelete: (() -> Void)? = nil
     ) -> some View {
         modifier(SelectionActions(
             isSelecting: isSelecting,
@@ -79,7 +79,7 @@ private struct SelectionActions: ViewModifier {
     let sendableCount: Int?
     let onSend: (() -> Void)?
     let bulkAction: SelectionBulkAction?
-    let onDelete: () -> Void
+    let onDelete: (() -> Void)?
 
     /// What the delete will really remove.
     private var effectiveDeleteCount: Int { deletableCount ?? count }
@@ -97,17 +97,18 @@ private struct SelectionActions: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // No `.animation(value: isSelecting)` here: `ListSelection` already
+            // changes the mode inside `withAnimation`. A second, screen-wide
+            // animation re-animated every row of the list along with the bar.
             .safeAreaInset(edge: .bottom) {
                 if isSelecting { bar }
             }
-            .animation(Theme.Motion.bouncy, value: isSelecting)
-            .confirmationDialog(deleteTitle, isPresented: $confirmingDelete,
-                                titleVisibility: .visible) {
-                Button("Delete", role: .destructive, action: onDelete)
-            } message: {
-                Text(deleteMessage
-                     ?? "This permanently removes the selected \(noun.plural). This can't be undone.")
-            }
+            .uniformDeleteAlert(
+                title: deleteTitle,
+                message: deleteMessage ?? "Are you sure you want to permanently delete the selected \(noun.plural)? This action cannot be undone.",
+                isPresented: $confirmingDelete,
+                onDelete: { onDelete?() }
+            )
     }
 
     /// The selection count, as a badge that can never be squeezed out.
@@ -136,14 +137,14 @@ private struct SelectionActions: ViewModifier {
                     .font(.display(17, weight: .bold))
                     .monospacedDigit()
                     .contentTransition(.numericText())
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.paper)
                     // Room for two digits before it has to grow, so ticking from
                     // 9 to 10 doesn't shove the buttons sideways.
                     .frame(minWidth: 22)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
                     .background(Color.clay, in: Capsule())
-                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+                    .transition(LiquidMaterialize(scale: 0.5, blur: 4))
             }
         }
         .fixedSize()
@@ -164,6 +165,9 @@ private struct SelectionActions: ViewModifier {
     /// Invalid" vs "Mark Valid" is the whole point of that button, so that's the
     /// one that keeps its text (and `lineLimit`, so it can never wrap again).
     private var bar: some View {
+        // The bar is the glass; its buttons are solid fills on it. Glass
+        // buttons on a glass bar are two panes rendering at once, and they
+        // trailed the bar by a frame whenever it moved.
         HStack(spacing: 10) {
             countBadge
             Spacer(minLength: 6)
@@ -181,8 +185,7 @@ private struct SelectionActions: ViewModifier {
                         // the one moment this slot changes under the user's thumb.
                         .symbolEffect(.bounce, value: bulkAction.systemImage)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(bulkAction.tint ?? .accentColor)
+                .filledButton(bulkAction.tint ?? .clay)
                 .disabled(count == 0)
             }
             if let onSend {
@@ -193,29 +196,28 @@ private struct SelectionActions: ViewModifier {
                     Label("Send", systemImage: "paperplane.fill")
                         .labelStyle(.iconOnly)
                 }
-                .buttonStyle(.borderedProminent)
+                .primaryButton()
                 .disabled(count == 0 || effectiveSendCount == 0)
                 .accessibilityLabel("Send")
             }
-            // Bordered, not prominent. Delete here is irreversible, cascades to a
-            // shared catalog, and affects every user — it should be reachable, not
-            // the brightest thing on screen inviting a tap.
-            Button(role: .destructive) {
-                if confirmsDelete {
-                    Haptics.warning()
-                    confirmingDelete = true
-                } else {
-                    Haptics.thud()
-                    onDelete()
+            if let onDelete {
+                Button(role: .destructive) {
+                    if confirmsDelete {
+                        Haptics.warning()
+                        confirmingDelete = true
+                    } else {
+                        Haptics.thud()
+                        onDelete()
+                    }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                        .labelStyle(.iconOnly)
                 }
-            } label: {
-                Label("Delete", systemImage: "trash")
-                    .labelStyle(.iconOnly)
+                .secondaryButton()
+                .tint(.danger)
+                .disabled(count == 0 || effectiveDeleteCount == 0)
+                .accessibilityLabel("Delete")
             }
-            .buttonStyle(.bordered)
-            .tint(.danger)
-            .disabled(count == 0 || effectiveDeleteCount == 0)
-            .accessibilityLabel("Delete")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -228,9 +230,7 @@ private struct SelectionActions: ViewModifier {
         .padding(.bottom, 6)
         // The bar grows up out of the bottom edge rather than sliding in at full
         // size, matching Home's undo capsule — both are the same kind of object.
-        .transition(.move(edge: .bottom)
-            .combined(with: .scale(scale: 0.92, anchor: .bottom))
-            .combined(with: .opacity))
+        .transition(.glassRise)
         // Every tick and untick of a row is a detent, felt through the bar that
         // counts them rather than through each row separately.
         .sensoryFeedback(.selection, trigger: count)

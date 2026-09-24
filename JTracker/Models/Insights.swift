@@ -37,20 +37,12 @@ struct Insights {
             self.replies = entries.count { $0.contact.hasReplied }
             self.people = Set(entries.map(\.contact.id)).count
         }
-
-        /// Whole days since the last mail went out. The number the "waiting on"
-        /// list is ordered by, and the one worth acting on: a company silent for
-        /// three weeks is a different problem from one mailed yesterday.
-        var daysWaiting: Int? {
-            guard let lastSentAt else { return nil }
-            return Calendar.current.dateComponents([.day], from: lastSentAt, to: .now).day
-        }
     }
 
     /// One unanswered mail, kept per *person* rather than per send: the last
     /// thing you wrote them and how long it has been quiet since. The Waiting
     /// lane of Quick Actions lists these, filters them by age, and mails a
-    /// follow-up to whichever ones are ticked — so a recruiter mailed twice is
+    /// follow-up to whichever ones are ticked — so a contact mailed twice is
     /// one row and one follow-up, not two.
     struct WaitingMail: Identifiable {
         let contact: Contact
@@ -96,7 +88,7 @@ struct Insights {
     }
 
     /// Typical wait before an answer arrives, in days — the median rather than the
-    /// mean, so one recruiter who answered six weeks later doesn't move it.
+    /// mean, so one contact who answered six weeks later doesn't move it.
     var medianResponseDays: Int?
 
     /// The longest anyone has been left hanging, in days. Read off the person
@@ -143,7 +135,7 @@ struct Insights {
 
         // One row per person, carrying their most recent unanswered send. The
         // feed holds a row per send, and a follow-up queue that lists the same
-        // recruiter three times is three mails to the same inbox.
+        // contact three times is three mails to the same inbox.
         var latestByContact: [Contact.ID: ActivityEntry] = [:]
         for entry in insights.unanswered {
             let held = latestByContact[entry.contact.id]

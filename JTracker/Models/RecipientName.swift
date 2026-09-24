@@ -1,6 +1,6 @@
 import Foundation
 
-/// Turns whatever is stored in a recruiter row into something safe to put after
+/// Turns whatever is stored in a contact row into something safe to put after
 /// "Hi ".
 ///
 /// Contact rows come from a shared, largely scraped catalog, so the `name` field

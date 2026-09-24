@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A read-only summary of a cold mail that was sent: who it went to, when, and
+/// A read-only summary of a mail that was sent: who it went to, when, and
 /// the exact subject and body that were delivered. Shown from the Activity tab
 /// and from a company's Sent section.
 struct MailSummaryView: View {
@@ -10,7 +10,7 @@ struct MailSummaryView: View {
     @Environment(\.dismiss) private var dismiss
 
     private var recipientName: String {
-        contact.name.isEmpty ? contact.email : contact.name
+        contact.displayName
     }
 
     /// Full date + time, e.g. "Aug 14, 2026 at 3:42 PM".

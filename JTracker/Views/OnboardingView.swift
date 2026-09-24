@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Shown after the first Gmail sign-in: collect the profile details used to fill
-/// cold-mail templates, then save them to the database before entering the app.
+/// mail templates, then save them to the database before entering the app.
 struct OnboardingView: View {
     @Environment(ProfileStore.self) private var store
 
@@ -11,7 +11,7 @@ struct OnboardingView: View {
         NavigationStack {
             PaperForm {
                 Section {
-                    Text("Tell us about yourself. This fills in your cold-mail templates and is saved to your account.")
+                    Text("Tell us about yourself. This fills in your mail templates and is saved to your account.")
                         .font(.subheadline)
                         .foregroundStyle(.inkMuted)
                 }
@@ -43,14 +43,8 @@ struct OnboardingView: View {
             .navigationTitle("Set Up Profile")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled()
-            .alert(
-                "Couldn't save profile",
-                isPresented: Binding(get: { store.errorMessage != nil },
-                                     set: { if !$0 { store.clearError() } })
-            ) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(store.errorMessage ?? "")
+            .messageAlert("Couldn't save profile", message: store.errorMessage) {
+                store.clearError()
             }
         }
     }

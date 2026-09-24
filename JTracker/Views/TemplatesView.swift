@@ -1,14 +1,20 @@
 import SwiftUI
 
-/// The Templates tab: manage reusable mail presets.
+/// The Templates tab: your reusable mails, each shown the way it reads.
+///
+/// A card is the template at a glance — its name, whether it's ready to send
+/// (the same checks the editor runs, against your profile), the subject, the
+/// opening lines with every placeholder lit up, and which placeholders it fills.
+/// Tap to edit; hold for Duplicate and Delete; swipe to delete.
 struct TemplatesView: View {
     @Environment(TemplateStore.self) private var store
+    @Environment(ProfileStore.self) private var profileStore
 
     @State private var isAdding = false
     @State private var editingTemplate: MailTemplate?
-    @State private var isSelecting = false
-    @State private var selection = Set<MailTemplate.ID>()
+    @State private var selection = ListSelection<MailTemplate.ID>()
     @State private var confirmingDelete = false
+    @State private var pendingDelete: MailTemplate?
     @State private var searchText = ""
 
     /// Templates matching the search, by name, subject, or body — the body counts
@@ -24,126 +30,69 @@ struct TemplatesView: View {
         }
     }
 
-    @ViewBuilder
-    private func templateRows(_ templates: [MailTemplate]) -> some View {
-        ForEach(templates) { template in
-            TemplateRow(template: template)
-                .listRowInsets(EdgeInsets(top: 4, leading: Theme.Space.gutter,
-                                          bottom: 4, trailing: Theme.Space.gutter))
-                // Templates get the card press treatment for the first time here:
-                // the row used to be a bare tap gesture, so it was the one list in
-                // the app that didn't answer a finger.
-                .selectableRow(isSelecting: isSelecting) {
-                    beginSelection(with: template.id)
-                } onTap: {
-                    editingTemplate = template
-                }
-                .swipeActions(edge: .trailing) {
-                    if !isSelecting {
-                        Button(role: .destructive) {
-                            Haptics.thud()
-                            Task { await store.delete(template) }
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
-                }
-        }
-    }
-
-    private func enterSelection() {
-        selection = []
-        Haptics.press()
-        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
-    }
-
-    /// Entered by holding a row, with that row already picked.
-    private func beginSelection(with id: MailTemplate.ID) {
-        selection = [id]
-        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
-    }
-
-    private func exitSelection() {
-        Haptics.tap(0.5)
-        withAnimation(Theme.Motion.bouncy) { isSelecting = false }
-        selection = []
-    }
-
-    private func deleteSelected() {
-        Haptics.thud()
-        let toDelete = store.templates.filter { selection.contains($0.id) }
-        Task {
-            for template in toDelete {
-                await store.delete(template)
-            }
-        }
-        exitSelection()
-    }
-
     var body: some View {
-        NavigationStack {
+        let rows = filtered
+        return NavigationStack {
             Group {
                 if store.templates.isEmpty {
-                    if store.isLoading {
-                        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                } else if filtered.isEmpty {
+                    if store.isLoading { LoadingState() } else { emptyState }
+                } else if rows.isEmpty {
                     ContentUnavailableView.search(text: searchText)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List(selection: $selection) {
-                        Section { templateRows(filtered) }
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
+                    List(selection: $selection.ids) {
+                        ForEach(rows) { template in
+                            templateCard(template)
+                        }
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.paper)
-                    .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
+                    .cardList()
+                    .selectionEditMode(selection.isSelecting)
                     // Templates are per-account, not per-device — pull to sync in
                     // whatever another of the user's signed-in clients has saved.
                     .refreshable { await store.refresh() }
-                    // A template saved on another device arriving mid-pull should
-                    // spring into the list, not blink into it.
-                    .animation(Theme.Motion.bouncy, value: filtered.map(\.id))
                 }
             }
+            .paperScreen()
             .navigationTitle("Templates")
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $searchText, prompt: "Search templates")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if isSelecting {
-                        GlassDoneButton { exitSelection() }
-                    } else {
-                        Menu {
-                            Button {
-                                isAdding = true
-                            } label: {
-                                Label("New Template", systemImage: "plus")
+                if selection.isSelecting {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        DoneButton { selection.exit() }
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if !store.templates.isEmpty {
+                            Button { selection.enter() } label: {
+                                Image(systemName: "checkmark.circle")
                             }
-                            if !store.templates.isEmpty {
-                                Button {
-                                    enterSelection()
-                                } label: {
-                                    Label("Select", systemImage: "checkmark.circle")
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis")
+                            .accessibilityLabel("Select templates")
                         }
-                        .accessibilityLabel("More actions")
+                    }
+                    // Writing a template is what this screen is for, so it's a
+                    // button in the bar rather than an item in a menu.
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { isAdding = true } label: {
+                            Image(systemName: "plus")
+                        }
+                        .accessibilityLabel("New template")
                     }
                 }
             }
             .selectionActions(
-                isSelecting: isSelecting,
+                isSelecting: selection.isSelecting,
                 count: selection.count,
                 noun: SelectionNoun(singular: "template", plural: "templates"),
-                confirmingDelete: $confirmingDelete
-            ) { deleteSelected() }
+                confirmingDelete: $confirmingDelete,
+                onDelete: deleteSelected
+            )
+            .uniformDeleteAlert(
+                item: $pendingDelete,
+                title: { "Delete “\($0.name)”?" },
+                message: "The template is removed from every device you're signed in on. Mails already sent aren't affected."
+            ) { template in
+                Task { await store.delete([template]) }
+            }
             .sheet(isPresented: $isAdding) {
                 TemplateEditorView(existing: nil) { new in
                     Task { await store.save(new) }
@@ -157,55 +106,218 @@ struct TemplatesView: View {
         }
     }
 
+    private func templateCard(_ template: MailTemplate) -> some View {
+        TemplateCard(template: template,
+                     status: TemplateStatus(template: template, profile: profileStore.profile))
+            .selectableRow(isSelecting: selection.isSelecting) {
+                selection.begin(with: template.id)
+            } onTap: {
+                editingTemplate = template
+            }
+            .contextMenu {
+                Button("Edit", systemImage: "pencil") { editingTemplate = template }
+                Button("Duplicate", systemImage: "plus.square.on.square") {
+                    Task { await store.duplicate(template) }
+                }
+                Divider()
+                Button("Delete", systemImage: "trash", role: .destructive) { pendingDelete = template }
+            }
+            .swipeActions(edge: .trailing) {
+                if !selection.isSelecting {
+                    Button(role: .destructive) {
+                        Haptics.warning()
+                        pendingDelete = template
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    Button {
+                        Haptics.tap()
+                        Task { await store.duplicate(template) }
+                    } label: {
+                        Label("Duplicate", systemImage: "plus.square.on.square")
+                    }
+                    .tint(.slate)
+                }
+            }
+            // Outermost, so the list reads it: inside the tap wrapper, the
+            // separator and row fill came back.
+            .cardRow(top: 6, bottom: 6)
+    }
+
+    private func deleteSelected() {
+        Haptics.thud()
+        let doomed = store.templates.filter { selection.contains($0.id) }
+        selection.exit()
+        Task { await store.delete(doomed) }
+    }
+
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("No Templates", systemImage: "doc.plaintext.fill")
+            Label("No templates yet", systemImage: "doc.text")
         } description: {
-            Text("Save reusable presets with placeholders to speed up cold mails.")
+            Text("A template is a mail you write once. Placeholders like {Receiver-Name} fill in per contact when you send.")
         } actions: {
-            Button {
-                isAdding = true
-            } label: {
-                Label("New Template", systemImage: "plus")
+            VStack(spacing: 10) {
+                Button {
+                    isAdding = true
+                } label: {
+                    Label("New Template", systemImage: "plus")
+                }
+                .primaryButton()
+                Button {
+                    Task { await store.save(.starter) }
+                } label: {
+                    Label("Start from an example", systemImage: "sparkles")
+                }
+                .secondaryButton()
             }
-            .buttonStyle(.borderedProminent)
         }
     }
 }
 
-/// A template row: a document-icon tile, the name, and a subject preview.
-private struct TemplateRow: View {
+// MARK: - Status
+
+/// Whether a template is ready to send, from the same checks the editor runs.
+/// Recipients aren't consulted here — that needs the whole catalog, and belongs
+/// to the editor's full report.
+private struct TemplateStatus {
+    let errors: Int
+    let warnings: Int
+
+    init(template: MailTemplate, profile: Profile) {
+        let findings = TemplateDiagnostics.analyze(subject: template.subject, content: template.content,
+                                                   profile: profile, contacts: [])
+        errors = findings.filter { $0.severity == .error }.count
+        warnings = findings.count - errors
+    }
+
+    var chip: StatusChip {
+        if errors > 0 {
+            return StatusChip(text: "\(errors) to fix", systemImage: "exclamationmark.octagon.fill", color: .danger)
+        }
+        if warnings > 0 {
+            return StatusChip(text: "\(warnings) to check", systemImage: "exclamationmark.triangle.fill", color: .kraft)
+        }
+        return StatusChip(text: "Ready", systemImage: "checkmark.circle.fill", color: .olive)
+    }
+}
+
+// MARK: - Card
+
+private struct TemplateCard: View {
     let template: MailTemplate
+    let status: TemplateStatus
+
+    private var placeholders: [MailPlaceholder] {
+        let text = template.subject + template.content
+        return MailPlaceholder.allCases.filter { text.contains($0.token) }
+    }
+
+    private var wordCount: Int {
+        template.content.split { $0.isWhitespace || $0.isNewline }.count
+    }
 
     var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "doc.text.fill")
-                .font(.title2)
-                .foregroundStyle(.tint)
-                .frame(width: Theme.Avatar.medium, height: Theme.Avatar.medium)
-                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(template.name)
-                    .font(.headline)
-                Text(template.subject)
-                    .font(.caption)
-                    .foregroundStyle(.inkMuted)
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "doc.text.fill")
+                    .font(.body)
+                    .foregroundStyle(.clay)
+                    .frame(width: 34, height: 34)
+                    .background(Color.clay.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(template.name)
+                        .font(.display(18))
+                        .foregroundStyle(.ink)
+                        .lineLimit(2)
+                    Text(template.subject.isEmpty
+                         ? AttributedString("No subject")
+                         : Self.highlighted(template.subject, font: .subheadline.weight(.medium)))
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(template.subject.isEmpty ? Color.inkFaint : Color.inkMuted)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                status.chip
             }
 
-            Spacer()
+            // The opening, as it reads, with its placeholders lit up.
+            Text(Self.highlighted(template.content.isEmpty ? "Empty template" : template.content,
+                                  font: .callout.weight(.semibold)))
+                .font(.callout)
+                .foregroundStyle(Color.ink.opacity(0.82))
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.paperSunken, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.inkFaint)
+            HStack(alignment: .center, spacing: 8) {
+                if placeholders.isEmpty {
+                    Text("No placeholders")
+                        .font(.caption)
+                        .foregroundStyle(.inkFaint)
+                } else {
+                    WrappingHStack(spacing: 5, lineSpacing: 5) {
+                        ForEach(placeholders) { placeholder in
+                            Text(placeholder.shortLabel)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.slate)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.slate.opacity(0.14), in: Capsule())
+                        }
+                    }
+                }
+                Spacer(minLength: 4)
+                Text("\(wordCount) words")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.inkFaint)
+                    .fixedSize()
+            }
         }
-        .padding(12)
+        .padding(14)
         .panel()
+    }
+
+    /// The body with each placeholder token coloured clay and set semibold, and
+    /// line breaks folded to spaces so three lines show three lines of prose.
+    private static func highlighted(_ content: String, font: Font) -> AttributedString {
+        var result = AttributedString(content.replacingOccurrences(of: "\n", with: " "))
+        for placeholder in MailPlaceholder.allCases {
+            var searchRange = result.startIndex..<result.endIndex
+            while let range = result[searchRange].range(of: placeholder.token) {
+                result[range].foregroundColor = .clay
+                result[range].font = font
+                searchRange = range.upperBound..<result.endIndex
+            }
+        }
+        return result
+    }
+}
+
+extension MailTemplate {
+    /// A worked example for an empty account: a short, specific cold mail that
+    /// shows every kind of placeholder in use.
+    static var starter: MailTemplate {
+        MailTemplate(
+            name: "Intro — referral ask",
+            subject: "{Sender-Position} at {Sender-College} — quick question about {Receiver-Company}",
+            content: """
+            Hi {Receiver-Name},
+
+            I'm {Sender-Name}, a {Sender-Position} at {Sender-College}. I've been following {Receiver-Company}'s work and would love to be considered for an internship on your team.
+
+            My resume is here: {Resume-Link}. Would you be open to a short chat, or pointing me to the right person?
+
+            Thanks for your time,
+            {Sender-Name}
+            """
+        )
     }
 }
 
 #Preview {
     TemplatesView()
         .environment(TemplateStore())
+        .environment(ProfileStore())
 }

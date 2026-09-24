@@ -27,7 +27,7 @@ struct StatusChip: View {
         // Replied, anything becoming Invalid. Springing in from the trailing edge
         // it shares with the chip it replaced makes that read as a swap rather
         // than as two unrelated fades.
-        .transition(.scale(scale: 0.7, anchor: .trailing).combined(with: .opacity))
+        .transition(LiquidMaterialize(scale: 0.7, blur: 4, anchor: .trailing))
     }
 }
 
@@ -77,5 +77,31 @@ struct InvalidPill: View {
     var body: some View {
         StatusChip(text: "Invalid", systemImage: "exclamationmark.triangle.fill",
                    color: .statusInvalid)
+    }
+}
+
+/// A mail domain as a chip. `listed` domains are saved on the company and solid;
+/// the others are only seen on its contacts' addresses, and dashed.
+struct DomainChip: View {
+    let domain: String
+    var listed = true
+
+    var body: some View {
+        Text("@\(domain)")
+            .font(.caption.weight(.semibold).monospaced())
+            .foregroundStyle(listed ? Color.clay : Color.inkMuted)
+            .lineLimit(1)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background {
+                if listed {
+                    Capsule().fill(Color.clay.opacity(0.12))
+                } else {
+                    Capsule().strokeBorder(Color.inkFaint.opacity(0.6),
+                                           style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                }
+            }
+            .contentShape(.capsule)
+            .accessibilityLabel(listed ? domain : "\(domain), from contacts")
     }
 }

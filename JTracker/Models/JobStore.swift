@@ -1,21 +1,25 @@
 import Foundation
 import Observation
 
-/// The app's data layer. Companies and recruiters are a shared catalog in
+/// The app's data layer. Companies and contacts are a shared catalog in
 /// Supabase; each Gmail user tracks a subset of companies (by id) and has their
 /// own per-user "sent" state, overlaid onto the catalog at load time. Every
 /// mutation writes to the database and then reloads, so on-screen state always
 /// mirrors what's stored.
 @Observable
 final class JobStore {
-    /// The user's tracked companies, with recruiters and sent state. Drives Home's
+    /// The user's tracked companies, with contacts and sent state. Drives Home's
     /// "Tracking" section.
     private(set) var jobs: [Job] = []
-    /// Every company in the shared catalog, with recruiters and this user's sent
+    /// Every company in the shared catalog, with contacts and this user's sent
     /// state overlaid. Drives the Companies list and the cross-company lanes of
     /// Quick Actions.
     private(set) var allCompanies: [Job] = []
-    /// The Activity feed: every recruiter the user has sent to, newest first.
+    /// Companies opened directly (a deep link, an Activity row) that sit beyond
+    /// the catalog pages loaded so far. Kept apart from `allCompanies` so the
+    /// paged, name-sorted list never has rows spliced into the middle of it.
+    private var detachedCompanies: [String: Job] = [:]
+    /// The Activity feed: every contact the user has sent to, newest first.
     /// Loaded from the send history, so it's independent of which companies are
     /// currently tracked on Home.
     private(set) var activity: [ActivityEntry] = []
@@ -28,6 +32,25 @@ final class JobStore {
 
     private(set) var isLoading = false
     var errorMessage: String?
+
+    // MARK: - Catalog paging
+    //
+    // Only the catalog is paged. The send history is always fetched whole:
+    // Insights, reply counts and the "already mailed" checks are only right
+    // when they see every send.
+
+    private(set) var hasMoreCompanies = true
+    private(set) var isLoadingMoreCompanies = false
+    /// How many catalog rows have been paged in from the server.
+    private var companyOffset = 0
+
+    // MARK: - Server search
+
+    /// Catalog matches from the server for `searchQuery`, covering companies on
+    /// pages that haven't been loaded yet.
+    private(set) var searchResults: [Job] = []
+    private(set) var isSearchingServer = false
+    private var searchQuery = ""
 
     /// The connected Gmail address whose data we show. Set on sign-in.
     var userEmail: String?
@@ -95,6 +118,54 @@ final class JobStore {
     /// tracked list — so a detail screen works whether or not it's tracked.
     func company(id: String) -> Job? {
         allCompanies.first { $0.id == id } ?? jobs.first { $0.id == id }
+            ?? detachedCompanies[id] ?? searchResults.first { $0.id == id }
+    }
+
+    /// A contact by id, from any company held in memory.
+    func contact(id: Contact.ID) -> Contact? {
+        knownCompanies.lazy.flatMap(\.contacts).first { $0.id == id }
+    }
+
+    /// Load a specific company by id from Supabase if it isn't already in memory.
+    @discardableResult
+    func loadCompanyIfNeeded(id: String) async -> Job? {
+        if let existing = company(id: id) { return existing }
+        guard var list = try? await SupabaseAPI.fetchCompany(id: id).map({ [$0] }) else { return nil }
+        overlaySends(latestSendByContact, into: &list)
+        detachedCompanies[id] = list[0]
+        return list[0]
+    }
+
+    /// Search the full catalog on Supabase for companies matching `query` (by name,
+    /// sector, or contact info), overlaying user send state onto any returned items.
+    ///
+    /// Meant to be driven from `.task(id: query)`: typing cancels the previous
+    /// call, and the short sleep up front debounces keystrokes so only a pause
+    /// in typing reaches the server.
+    func searchCompanies(query: String) async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            searchQuery = ""
+            searchResults = []
+            isSearchingServer = false
+            return
+        }
+
+        isSearchingServer = true
+        guard await Task.debounce(.milliseconds(250)) else { return }
+
+        do {
+            var results = try await SupabaseAPI.searchCompanies(query: trimmed)
+            guard !Task.isCancelled else { return }
+            overlaySends(latestSendByContact, into: &results)
+            searchQuery = trimmed
+            searchResults = results
+        } catch {
+            // A failed search leaves the in-memory matches on screen; it isn't
+            // worth an alert over a keystroke.
+            guard !Task.isCancelled else { return }
+        }
+        isSearchingServer = false
     }
 
     /// Whether the company is on this user's Home.
@@ -102,10 +173,19 @@ final class JobStore {
         jobs.contains { $0.id == id }
     }
 
-    /// Contacts across every company that can be cold-mailed (well-formed address,
+    /// Contacts across every company that can be mailed (well-formed address,
     /// not marked invalid) and haven't been mailed in the last month — never-sent
     /// first, then oldest sent. Powers the "New" lane of Insights.
-    var suggestedContacts: [(company: Job, contact: Contact)] {
+    /// Memoized to prevent O(N log N) recalculations on every view body re-render.
+    private(set) var suggestedContacts: [(company: Job, contact: Contact)] = []
+
+    /// `suggestedContacts` grouped by company, preserving the flat list's urgency
+    /// order (a company appears at the position of its most-overdue contact).
+    /// Each group is one tap from a batch send in Insights.
+    /// Memoized to make row selection and interaction instantaneous.
+    private(set) var suggestedGroups: [(company: Job, contacts: [Contact])] = []
+
+    private func rebuildSuggested() {
         let cutoff = Date().addingTimeInterval(-30 * 24 * 60 * 60)
         var result: [(company: Job, contact: Contact)] = []
         for company in allCompanies {
@@ -115,7 +195,7 @@ final class JobStore {
                 }
             }
         }
-        return result.sorted { a, b in
+        let sorted = result.sorted { a, b in
             switch (a.contact.sentAt, b.contact.sentAt) {
             case (nil, nil):
                 return a.company.company.localizedCaseInsensitiveCompare(b.company.company) == .orderedAscending
@@ -124,27 +204,23 @@ final class JobStore {
             case let (l?, r?): return l < r
             }
         }
-    }
+        suggestedContacts = sorted
 
-    /// `suggestedContacts` grouped by company, preserving the flat list's urgency
-    /// order (a company appears at the position of its most-overdue contact).
-    /// Each group is one tap from a batch send in Insights.
-    var suggestedGroups: [(company: Job, contacts: [Contact])] {
         var order: [String] = []
         var byID: [String: (company: Job, contacts: [Contact])] = [:]
-        for item in suggestedContacts {
+        for item in sorted {
             if byID[item.company.id] == nil {
                 byID[item.company.id] = (item.company, [])
                 order.append(item.company.id)
             }
             byID[item.company.id]?.contacts.append(item.contact)
         }
-        return order.compactMap { byID[$0] }
+        suggestedGroups = order.compactMap { byID[$0] }
     }
 
     // MARK: - Loading
 
-    /// Load the user's tracked companies and the full catalog (both with recruiters
+    /// Load the user's tracked companies and the full catalog (both with contacts
     /// + sent state), plus the Activity feed.
     func load() async {
         guard !isLoading else { return }
@@ -163,15 +239,17 @@ final class JobStore {
     /// The reload is conditional because a sync that turns up nothing new has
     /// nothing to show, and refetching the whole catalog would flash every screen
     /// for no reason.
-    func syncReplies(using sync: ReplySync) async {
-        let outcome = await sync.run(sends: sends, emailByRecruiter: emailByRecruiter)
+    func syncReplies(using sync: ReplySync, forceFullCheck: Bool = false) async {
+        let invalidIDs = Set(knownCompanies.flatMap(\.invalidContacts).map(\.id))
+        let outcome = await sync.run(sends: sends,
+                                     emailByContact: emailByContact,
+                                     excludingContactIDs: invalidIDs,
+                                     forceFullCheck: forceFullCheck)
         guard outcome.changedAnything else { return }
-        // Deliberately not `load()`: that one no-ops while another load is in
-        // flight, and this is the reload that carries the replies the sync has
-        // just written. Dropping it left an answer sitting in the database with
-        // nothing on screen to show for it until the next launch.
+        // Deliberately `reloadSendsOnly()`: re-fetching the entire companies catalog
+        // is unnecessary when only per-user sent/reply records have changed.
         do {
-            try await reloadAll()
+            try await reloadSendsOnly()
         } catch {
             report(error)
         }
@@ -186,7 +264,7 @@ final class JobStore {
         guard let email = userEmail else { return }
         guard !jobs.contains(where: { $0.id == companyID }) else { return }
         mutateTracked { if !$0.contains(companyID) { $0.append(companyID) } }
-        if let company = allCompanies.first(where: { $0.id == companyID }) {
+        if let company = company(id: companyID) {
             insertSorted(company)
         }
         pushTracked(add: true, companyID: companyID, email: email)
@@ -221,65 +299,145 @@ final class JobStore {
     private func insertSorted(_ job: Job) {
         guard !jobs.contains(where: { $0.id == job.id }) else { return }
         jobs.append(job)
-        jobs.sort { $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedAscending }
+        jobs = jobs.sortedByName()
     }
 
     // MARK: - Catalog mutations (shared, upstream — change the DB for everyone)
 
     /// Create a new company in the shared catalog. Not auto-tracked; it appears in
     /// the Companies list (with "Show empty" on) ready for contacts.
-    func createCompany(name: String, sector: String? = nil) async {
+    func createCompany(name: String, sector: String? = nil, domains: [String] = []) async {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         await perform {
-            _ = try await SupabaseAPI.addCompany(name: trimmed, sector: sector)
+            _ = try await SupabaseAPI.addCompany(name: trimmed, sector: sector, domains: domains)
+        }
+        warnIfDomainsDropped(domains)
+    }
+
+    /// Rename, re-sector, or change the domains of a catalog company (upstream,
+    /// for everyone), with a short window to undo it.
+    func updateCompany(id: String, name: String, sector: String?, domains: [String]) async {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        let previous = company(id: id)
+
+        let saved = await perform {
+            try await SupabaseAPI.updateCompany(id: id, name: trimmed, sector: sector, domains: domains)
+        }
+        if saved, domains != previous?.domains { warnIfDomainsDropped(domains) }
+        // Only a write that landed has anything to undo.
+        guard saved, let previous else { return }
+        UndoCoordinator.shared.stage(message: "Company details updated") { [weak self] in
+            await self?.perform {
+                try await SupabaseAPI.updateCompany(id: id, name: previous.company,
+                                                    sector: previous.sector,
+                                                    domains: previous.domains)
+            }
         }
     }
 
-    /// Rename or re-sector a catalog company (upstream, for everyone).
-    func updateCompany(id: String, name: String, sector: String?) async {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        await perform {
-            try await SupabaseAPI.updateCompany(id: id, name: trimmed, sector: sector)
-        }
+    /// A company saved without the domains it was given (the database predates
+    /// the column) is a partial save, and has to say so — the form closed as if
+    /// everything had landed.
+    private func warnIfDomainsDropped(_ domains: [String]) {
+        guard !domains.isEmpty, SupabaseAPI.domainsColumnMissing else { return }
+        errorMessage = "The company was saved, but its mail domains weren't: the database needs a one-time update first. Run the “companies.domains” migration from the README in the Supabase SQL editor."
     }
 
     /// Delete a company from the shared catalog (upstream). The reload afterwards
     /// reconciles the tracked cache against server truth, so it drops off Home too.
     func deleteCompanyUpstream(_ id: String) async {
+        await deleteCompanies([id])
+    }
+
+    /// Delete several catalog companies in one request and one reload.
+    func deleteCompanies(_ ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        await perform { try await SupabaseAPI.deleteCompanies(ids: ids) }
+    }
+
+    /// Every company already on file for a mail domain, with this user's sent
+    /// state overlaid — what the contact form suggests while an address is typed.
+    func companies(forDomain domain: String) async throws -> [Job] {
+        var found = try await SupabaseAPI.companies(forDomain: domain)
+        overlaySends(latestSendByContact, into: &found)
+        return found.sortedByName()
+    }
+
+    // MARK: - Contact mutations
+
+    /// Where a new contact goes: a company already in the catalog, or a new one
+    /// created for them in the same step.
+    enum ContactDestination {
+        case existing(Job)
+        case new(name: String)
+    }
+
+    func addContact(_ contact: Contact, to job: Job) async {
+        await addContact(contact, to: .existing(job))
+    }
+
+    /// Add a contact, and teach the catalog their mail domain.
+    ///
+    /// A work address the company doesn't list yet is added to its domains —
+    /// unless another company already uses it, which is a question for the
+    /// person (the form shows it), not something to settle silently. That's how
+    /// the domain list fills in on its own, and why a later contact at the same
+    /// domain gets pointed at the right company instead of starting a duplicate.
+    func addContact(_ contact: Contact, to destination: ContactDestination) async {
+        let domain = MailDomain.work(fromEmail: contact.email)
         await perform {
-            try await SupabaseAPI.deleteCompany(id: id)
+            switch destination {
+            case .existing(let job):
+                try await SupabaseAPI.addContact(companyID: job.id, contact: contact)
+                guard let domain, !job.domains.contains(domain) else { return }
+                let owners = try await SupabaseAPI.companies(forDomain: domain)
+                guard owners.allSatisfy({ $0.id == job.id }) else { return }
+                try await SupabaseAPI.setDomains(companyID: job.id, domains: job.domains + [domain])
+            case .new(let name):
+                let id = try await SupabaseAPI.addCompany(name: name, sector: nil,
+                                                          domains: domain.map { [$0] } ?? [])
+                try await SupabaseAPI.addContact(companyID: id, contact: contact)
+            }
         }
     }
 
-    // MARK: - Cold mail mutations
-
-    func addContact(_ contact: Contact, to job: Job) async {
-        await perform { try await SupabaseAPI.addRecruiter(companyID: job.id, contact: contact) }
-    }
-
+    /// Save an edited contact upstream, with a short window to undo it.
     func updateContact(_ contact: Contact) async {
-        await perform { try await SupabaseAPI.updateRecruiter(contact) }
+        let previous = self.contact(id: contact.id)
+
+        let saved = await perform { try await SupabaseAPI.updateContact(contact) }
+        guard saved, let previous else { return }
+        UndoCoordinator.shared.stage(message: "Contact details updated") { [weak self] in
+            await self?.perform { try await SupabaseAPI.updateContact(previous) }
+        }
     }
 
-    /// Mark cold mails valid or invalid in the shared catalog (upstream, for every
+    /// Mark contacts valid or invalid in the shared catalog (upstream, for every
     /// user — a bounced address is bounced for everyone). Invalid ones drop out of
     /// Suggested and can no longer be mailed, but they're kept, with their send
     /// history, so the company screen can still show who was ruled out and why.
     /// Fully reversible, which is why it's offered instead of deleting.
     func setValidity(_ ids: [Contact.ID], isValid: Bool) async {
         guard !ids.isEmpty else { return }
-        await perform { try await SupabaseAPI.setRecruiterValidity(ids: ids, isValid: isValid) }
+        await perform { try await SupabaseAPI.setContactValidity(ids: ids, isValid: isValid) }
     }
 
-    /// Delete a cold mail. Sent mails are kept as a record and can't be removed.
+    /// Delete a contact. Sent ones are kept as a record and can't be removed.
     func deleteContact(_ contact: Contact) async {
-        guard !contact.isSent else { return }
-        await perform { try await SupabaseAPI.deleteRecruiter(id: contact.id) }
+        await deleteContacts([contact])
     }
 
-    /// Append a send to this user's history for each recruiter. Does nothing
+    /// Delete several contacts in one request and one reload, skipping any that
+    /// have been mailed.
+    func deleteContacts(_ contacts: [Contact]) async {
+        let ids = contacts.filter { !$0.isSent }.map(\.id)
+        guard !ids.isEmpty else { return }
+        await perform { try await SupabaseAPI.deleteContacts(ids: ids) }
+    }
+
+    /// Append a send to this user's history for each contact. Does nothing
     /// when no Gmail is connected — you can't send without it.
     ///
     /// Deliberately not routed through `perform`: this is called by `MailQueue`
@@ -304,7 +462,10 @@ final class JobStore {
     /// sent records, and rebuild the Activity feed.
     private func reloadAll() async throws {
         guard let email = userEmail else {
-            jobs = []; allCompanies = []; activity = []; sends = []; insights = Insights()
+            jobs = []; allCompanies = []; detachedCompanies = [:]; searchResults = []
+            activity = []; sends = []; insights = Insights()
+            suggestedContacts = []; suggestedGroups = []
+            companyOffset = 0; hasMoreCompanies = true
             return
         }
 
@@ -319,44 +480,135 @@ final class JobStore {
         }
 
         // Server is the source of truth for membership; mirror it into the cache.
-        var companies = try await SupabaseAPI.fetchTrackedCompanies(userEmail: email)
+        let companies = try await SupabaseAPI.fetchTrackedCompanies(userEmail: email)
         trackedByEmail[email] = companies.map(\.id)
         trackedFile.save(trackedByEmail)
 
-        var all = try await SupabaseAPI.fetchAllCompanies()
+        // Refetch as many catalog rows as were already paged in, not just the
+        // first page. Every write ends in this reload, and collapsing the list
+        // back to page one would yank the user out of wherever they'd scrolled —
+        // and drop the company they were editing out of memory.
+        let pageLimit = max(companyOffset, SupabaseAPI.defaultPageSize)
+        let all = try await SupabaseAPI.fetchAllCompanies(limit: pageLimit, offset: 0)
+        companyOffset = all.count
+        hasMoreCompanies = all.count == pageLimit
 
-        // Sends come newest-first, so the first row per recruiter is their latest.
-        // Overlay the same per-user sent state onto both the tracked list and the
-        // full catalog.
-        let sends = try await SupabaseAPI.fetchSends(userEmail: email)
-        self.sends = sends
-        let byRecruiter = Dictionary(sends.map { ($0.recruiterID, $0) }, uniquingKeysWith: { latest, _ in latest })
-        overlaySends(byRecruiter, into: &companies)
-        overlaySends(byRecruiter, into: &all)
+        // Refresh detached companies that the catalog pages still don't cover.
+        // One that comes back nil was deleted (e.g. merged away) and is dropped.
+        let catalogIDs = Set(all.map(\.id))
+        var refreshedDetached: [String: Job] = [:]
+        for id in detachedCompanies.keys where !catalogIDs.contains(id) {
+            if let fresh = try? await SupabaseAPI.fetchCompany(id: id) {
+                refreshedDetached[id] = fresh
+            }
+        }
+
+        let refreshedSearch = searchQuery.isEmpty
+            ? [] : ((try? await SupabaseAPI.searchCompanies(query: searchQuery)) ?? searchResults)
+
+        let sends = try await SupabaseAPI.fetchSends(userEmail: email, limit: 0)
+        let activity = try await SupabaseAPI.fetchActivity(sends: sends)
+
+        // Assign everything together at the end, so no screen ever renders a
+        // half-reloaded mix of new companies and old sent state.
         jobs = companies
         allCompanies = all
-
-        // Activity is built from the full send history (not the tracked list), so
-        // removing a company from Home leaves its sent records here untouched, and
-        // every send — including repeats to the same recruiter — is its own row.
-        activity = try await SupabaseAPI.fetchActivity(sends: sends)
-            .sorted { a, b in
-                switch (a.date, b.date) {
-                case let (l?, r?): return l > r
-                case (_?, nil): return true
-                case (nil, _?): return false
-                case (nil, nil): return a.company.localizedCaseInsensitiveCompare(b.company) == .orderedAscending
-                }
-            }
-
-        insights = Insights.make(activity: activity, catalog: all)
+        detachedCompanies = refreshedDetached
+        searchResults = refreshedSearch
+        apply(sends: sends, activity: activity)
     }
 
-    /// Overlay this user's per-recruiter sent state onto a set of companies.
-    private func overlaySends(_ byRecruiter: [String: MailSend], into companies: inout [Job]) {
+    /// Refresh only sent records and reply state, without re-downloading the entire
+    /// shared companies catalog from Supabase.
+    private func reloadSendsOnly() async throws {
+        guard let email = userEmail else { return }
+        let sends = try await SupabaseAPI.fetchSends(userEmail: email, limit: 0)
+        let activity = try await SupabaseAPI.fetchActivity(sends: sends)
+        apply(sends: sends, activity: activity)
+    }
+
+    /// Install a fresh send history: overlay it onto every company held in
+    /// memory, then rebuild everything derived from it.
+    private func apply(sends: [MailSend], activity: [ActivityEntry]) {
+        self.sends = sends
+        let byContact = latestSendByContact
+        overlaySends(byContact, into: &jobs)
+        overlaySends(byContact, into: &allCompanies)
+        overlaySends(byContact, into: &searchResults)
+        for id in detachedCompanies.keys {
+            var list = [detachedCompanies[id]!]
+            overlaySends(byContact, into: &list)
+            detachedCompanies[id] = list[0]
+        }
+        // Activity is built from the send history (not the tracked list), so
+        // removing a company from Home leaves its sent records here untouched, and
+        // every send — including repeats to the same contact — is its own row.
+        self.activity = activity.sorted { Self.newestFirst($0, $1) }
+        rebuildDerived()
+    }
+
+    private func rebuildDerived() {
+        insights = Insights.make(activity: activity, catalog: allCompanies)
+        rebuildSuggested()
+    }
+
+    private static func newestFirst(_ a: ActivityEntry, _ b: ActivityEntry) -> Bool {
+        switch (a.date, b.date) {
+        case let (l?, r?): return l > r
+        case (_?, nil): return true
+        case (nil, _?): return false
+        case (nil, nil): return a.company.localizedCaseInsensitiveCompare(b.company) == .orderedAscending
+        }
+    }
+
+    // MARK: - Catalog paging
+
+    /// Load the next page of the shared catalog.
+    func loadMoreCompanies() async {
+        guard !isLoadingMoreCompanies, hasMoreCompanies, !isLoading else { return }
+        isLoadingMoreCompanies = true
+        defer { isLoadingMoreCompanies = false }
+
+        do {
+            var page = try await SupabaseAPI.fetchAllCompanies(
+                limit: SupabaseAPI.defaultPageSize,
+                offset: companyOffset
+            )
+            companyOffset += page.count
+            hasMoreCompanies = page.count == SupabaseAPI.defaultPageSize
+            guard !page.isEmpty else { return }
+
+            overlaySends(latestSendByContact, into: &page)
+            // Rows can shift across a page boundary when the catalog changes
+            // between loads; never show one twice.
+            let existingIDs = Set(allCompanies.map(\.id))
+            allCompanies.append(contentsOf: page.filter { !existingIDs.contains($0.id) })
+            for company in page { detachedCompanies[company.id] = nil }
+            rebuildDerived()
+        } catch {
+            report(error)
+        }
+    }
+
+    /// This user's latest send per contact. Sends come newest-first, so the first
+    /// row per contact is their latest.
+    private var latestSendByContact: [String: MailSend] {
+        Dictionary(sends.map { ($0.contactID, $0) }, uniquingKeysWith: { latest, _ in latest })
+    }
+
+    /// Every company held in memory, each once: the catalog pages, then Home's
+    /// list, companies opened directly, and search hits.
+    private var knownCompanies: [Job] {
+        var seen = Set<String>()
+        return (allCompanies + jobs + Array(detachedCompanies.values) + searchResults)
+            .filter { seen.insert($0.id).inserted }
+    }
+
+    /// Overlay this user's per-contact sent state onto a set of companies.
+    private func overlaySends(_ byContact: [String: MailSend], into companies: inout [Job]) {
         for j in companies.indices {
             for c in companies[j].contacts.indices {
-                guard let send = byRecruiter[companies[j].contacts[c].id] else { continue }
+                guard let send = byContact[companies[j].contacts[c].id] else { continue }
                 companies[j].contacts[c].isSent = true
                 companies[j].contacts[c].sentAt = send.sentAt
                 companies[j].contacts[c].sentSubject = send.subject
@@ -368,29 +620,41 @@ final class JobStore {
         }
     }
 
-    /// Where each recruiter's mail was addressed, for recovering the thread id of
+    /// Where each contact's mail was addressed, for recovering the thread id of
     /// a send made before the app captured one.
-    var emailByRecruiter: [String: String] {
+    var emailByContact: [String: String] {
         var result: [String: String] = [:]
-        for company in allCompanies {
+        for company in knownCompanies {
             for contact in company.contacts where !contact.email.isEmpty {
                 result[contact.id] = contact.email
             }
+        }
+        for entry in activity where !entry.contact.email.isEmpty {
+            result[entry.contact.id] = entry.contact.email
         }
         return result
     }
 
     /// Run a write, then refresh from the database so local state stays in sync.
     /// `inFlight` drives the app-wide "Saving…" state for the whole round-trip.
-    private func perform(_ operation: () async throws -> Void) async {
+    /// Returns whether the write itself succeeded (a failed reload afterwards is
+    /// reported, but doesn't un-happen the write).
+    @discardableResult
+    private func perform(_ operation: () async throws -> Void) async -> Bool {
         inFlight += 1
         defer { inFlight -= 1 }
         do {
             try await operation()
+        } catch {
+            report(error)
+            return false
+        }
+        do {
             try await reloadAll()
         } catch {
             report(error)
         }
+        return true
     }
 
     /// Surface an error, ignoring cancellations from interrupted view reloads.

@@ -35,6 +35,8 @@ struct RootView: View {
     /// three loads in a couple of hundred milliseconds, and a launch screen that
     /// appears and vanishes inside one is a flicker, not a screen.
     private static let minimumSplash: Duration = .milliseconds(1_150)
+    /// A beat after the last load, for the splash's final droplet to land.
+    private static let settleBeat: Duration = .milliseconds(380)
 
     /// How stale a check has to be before returning to the app runs another.
     /// Without a floor, every glance at the home screen and back would spend a
@@ -55,6 +57,12 @@ struct RootView: View {
                 LoginView()
             }
         }
+        // The window's own background is black; paper behind everything means no
+        // transition, scale or blur anywhere can ever reveal it.
+        .background(Color.paper.ignoresSafeArea())
+        // One appearance: the palette is black, so every piece of system chrome
+        // (sheets, alerts, keyboards, glass) is told to match it.
+        .preferredColorScheme(.dark)
         .environment(jobStore)
         .environment(profileStore)
         .environment(templateStore)
@@ -66,18 +74,23 @@ struct RootView: View {
         .overlay {
             if jobStore.isSaving || templateStore.isSaving {
                 ZStack {
-                    Color.black.opacity(0.15).ignoresSafeArea()
-                    ProgressView("Saving…")
-                        .padding(20)
-                        .background(Color.paperRaised,
-                                    in: RoundedRectangle(cornerRadius: Theme.Radius.card,
-                                                         style: .continuous))
+                    Color.black.opacity(0.12).ignoresSafeArea()
+                        .transition(.opacity)
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Saving…")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.ink)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .glassEffect(.regular, in: .capsule)
+                    .transition(.glassPop)
                 }
-                .popIn()
             }
         }
-        .animation(Theme.Motion.bouncy, value: jobStore.isSaving)
-        .animation(Theme.Motion.bouncy, value: templateStore.isSaving)
+        .animation(Theme.Motion.liquid, value: jobStore.isSaving)
+        .animation(Theme.Motion.liquid, value: templateStore.isSaving)
         // A failed write is the one thing on this screen the user has to act on,
         // so it announces itself before the alert has finished animating in.
         .sensoryFeedback(trigger: activeError != nil) { _, hasError in
@@ -87,14 +100,7 @@ struct RootView: View {
         // here: template and profile failures used to set an `errorMessage` that
         // no view was bound to, so a save that never reached the database looked
         // exactly like one that did.
-        .alert(
-            "Something went wrong",
-            isPresented: Binding(get: { activeError != nil }, set: { if !$0 { clearErrors() } })
-        ) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(activeError ?? "")
-        }
+        .messageAlert("Something went wrong", message: activeError) { clearErrors() }
     }
 
     private var activeError: String? {
@@ -111,14 +117,29 @@ struct RootView: View {
     /// first-time users, then show the tabs — already populated.
     @ViewBuilder
     private var signedInContent: some View {
-        if !isBooted {
-            SplashView(progress: Double(bootDone) / Double(Self.bootUnits))
-                // Grows very slightly as it goes, so the app arrives from behind
-                // the splash rather than the splash sliding off the app.
-                .transition(.opacity.combined(with: .scale(scale: 1.04)))
-        } else if !profileStore.hasProfile {
+        // The splash sits *over* the app rather than swapping with it. Swapping
+        // meant the arriving screen was scaled and blurred on its own, which
+        // pulled its edges in and showed the black window behind them as bars
+        // above and below. Layered, the app is already full-size underneath and
+        // the splash dissolves off the top of it.
+        ZStack {
+            if isBooted {
+                signedInApp
+                    .transition(.opacity)
+            }
+            if !isBooted {
+                SplashView(progress: Double(bootDone) / Double(Self.bootUnits))
+                    .transition(LiquidDissolve())
+                    .zIndex(1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var signedInApp: some View {
+        if !profileStore.hasProfile {
             OnboardingView()
-                .transition(.opacity)
+                .transition(LiquidMaterialize(scale: 1, blur: 12))
         } else {
             tabs
                 .transition(.opacity)
@@ -164,11 +185,16 @@ struct RootView: View {
         if elapsed < Self.minimumSplash {
             try? await Task.sleep(for: Self.minimumSplash - elapsed)
         }
+        // Let the last droplet finish fusing before the splash dissolves; cutting
+        // it off mid-glide is the one jolt left in an otherwise continuous launch.
+        try? await Task.sleep(for: Self.settleBeat)
 
         Haptics.success()
-        withAnimation(Theme.Motion.snappy) { isBooted = true }
+        withAnimation(.smooth(duration: 0.75)) { isBooted = true }
 
-        await jobStore.syncReplies(using: replySync)
+        // Full, not delta: the sync state may be left over from another account,
+        // and a delta against its timestamp would skip this account's threads.
+        await jobStore.syncReplies(using: replySync, forceFullCheck: true)
     }
 
     /// Run one launch load and mark it done: the rule advances a third, and the

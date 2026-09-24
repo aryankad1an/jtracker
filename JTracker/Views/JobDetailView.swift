@@ -7,22 +7,27 @@ private struct ComposeRequest: Identifiable {
     let preselect: Set<Contact.ID>?
 }
 
-/// A company's cold mails. Contacts that have been ruled out — a bounced address,
-/// or someone who has left the company — are marked invalid and sink into their
-/// own group at the bottom of the list, where they can't be mailed and are never
-/// suggested. Sent mails are a permanent record and can't be deleted.
+/// A company's detail screen: rich company metadata (name, sector, mail ID domain,
+/// outreach metrics), a button to edit company details upstream, and a collapsible
+/// button revealing the editable list of contacts.
 struct JobDetailView: View {
     @Environment(JobStore.self) private var jobStore
     let jobID: Job.ID
 
     @State private var isAdding = false
+    @State private var editingCompany: Job?
+    /// Open by default, and remembered: someone who collapses the list to read
+    /// the header finds it collapsed on the next company too.
+    @AppStorage("companyDetail.contactsExpanded") private var isContactsExpanded = true
     @State private var composeRequest: ComposeRequest?
     @State private var detailContact: Contact?
-    @State private var isSelecting = false
-    @State private var selection = Set<Contact.ID>()
+    @State private var selection = ListSelection<Contact.ID>()
     @State private var confirmingDelete = false
     @State private var pendingDelete: Contact?
     @State private var searchText = ""
+    /// True until the first attempt to fetch a company that isn't in memory has
+    /// finished, so the screen shows a spinner rather than "not found" meanwhile.
+    @State private var isResolving = true
 
     /// Always read the live job from the store so edits show immediately. Looks in
     /// the full catalog first, so a company opened from the Companies tab renders
@@ -31,32 +36,27 @@ struct JobDetailView: View {
         jobStore.company(id: jobID)
     }
 
-    /// All the company's cold mails, sorted by display name, in one list.
+    /// Contacts show while expanded, and always while searching — a search typed
+    /// into a collapsed list would otherwise look like it found nothing.
+    private var showsContacts: Bool {
+        isContactsExpanded || !searchText.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// All the company's contacts, sorted by display name, in one list.
     private func sortedContacts(_ job: Job) -> [Contact] {
         let query = searchText.trimmingCharacters(in: .whitespaces)
-        let matching = query.isEmpty ? job.contacts : job.contacts.filter {
-            $0.name.localizedCaseInsensitiveContains(query)
-                || $0.email.localizedCaseInsensitiveContains(query)
-                || $0.position.localizedCaseInsensitiveContains(query)
-        }
-        return matching.sorted {
-            let a = $0.name.isEmpty ? $0.email : $0.name
-            let b = $1.name.isEmpty ? $1.email : $1.name
-            return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
-        }
+        return (query.isEmpty ? job.contacts : job.contacts.filter { $0.matches(query) }).sortedByName()
     }
 
     /// Sent mails are a permanent record, so only unsent ones can actually be
     /// removed. The bar counts what's selected; the delete dialog counts what will
-    /// really go — they aren't the same number, and pretending otherwise meant
-    /// confirming "Delete 5" and watching 2 disappear.
+    /// really go.
     private var deletableCount: Int {
         guard let job else { return 0 }
         return job.contacts.filter { selection.contains($0.id) && !$0.isSent }.count
     }
 
-    /// The selected contacts that can actually be mailed, so a selection of only
-    /// invalid ones disables Send instead of opening an empty compose sheet.
+    /// The selected contacts that can actually be mailed.
     private var sendableCount: Int {
         guard let job else { return 0 }
         return job.contacts.filter {
@@ -70,75 +70,93 @@ struct JobDetailView: View {
                 let contacts = sortedContacts(job)
                 let active = contacts.filter(\.isValid)
                 let invalid = contacts.filter { !$0.isValid }
-                if contacts.isEmpty {
-                    emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List(selection: $selection) {
-                        Section { contactRows(active) }
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 4, leading: Theme.Space.gutter,
-                                                      bottom: 4, trailing: Theme.Space.gutter))
-                        // Ruled-out contacts keep their place in the company —
-                        // they're the record of who has already been tried — but
-                        // they sit below everything live, behind a header that
-                        // says why, so the working list above stays clean.
-                        if !invalid.isEmpty {
-                            Section {
-                                contactRows(invalid)
-                            } header: {
-                                Label("Invalid · \(invalid.count)",
-                                      systemImage: "exclamationmark.triangle.fill")
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.statusInvalid)
-                                    .textCase(nil)
-                            } footer: {
-                                // Footnote, not body: this is a caption explaining
-                                // the group, and at body size it shouted louder
-                                // than the contacts it was describing.
-                                Text("Wrong address, or the person has left. These are never suggested and can't be mailed. Swipe right to put one back.")
-                                    .font(.footnote)
-                                    .foregroundStyle(.inkMuted)
-                                    .padding(.top, 4)
+
+                List(selection: $selection.ids) {
+                    // Company details card (always visible at top)
+                    Section {
+                        companyHeaderCard(job)
+                    }
+                    .cardRow(top: 8, bottom: 8)
+
+                    // Contacts list disclosure button & items
+                    Section {
+                        contactsToggleButton(job: job, active: active.count, invalid: invalid.count)
+
+                        if showsContacts {
+                            if contacts.isEmpty {
+                                emptyContactsNotice
+                            } else {
+                                contactRows(active)
                             }
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 4, leading: Theme.Space.gutter,
-                                                      bottom: 4, trailing: Theme.Space.gutter))
                         }
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.paper)
-                    .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
-                    .refreshable { await jobStore.load() }
-                    // Marking a contact invalid moves it from the working list to
-                    // the group at the bottom. Springing that move is the feedback
-                    // for the swipe — the row visibly travels to where it now lives.
-                    .animation(Theme.Motion.bouncy, value: active.map(\.id))
-                    .animation(Theme.Motion.bouncy, value: invalid.map(\.id))
+                    .cardRow()
+
+                    // Ruled-out contacts keep their place in the company — they're
+                    // the record of who has already been tried — but sit below
+                    // everything live, in a sibling section (Lists don't nest them).
+                    if showsContacts && !invalid.isEmpty {
+                        Section {
+                            contactRows(invalid)
+                        } header: {
+                            Label("Invalid · \(invalid.count)",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.statusInvalid)
+                                .textCase(nil)
+                        } footer: {
+                            Text("Wrong address, or the person has left. These are never suggested and can't be mailed. Swipe right to put one back.")
+                                .font(.footnote)
+                                .foregroundStyle(.inkMuted)
+                                .padding(.top, 4)
+                        }
+                        .cardRow()
+                    }
+                }
+                .cardList()
+                .selectionEditMode(selection.isSelecting)
+                .refreshable { await jobStore.load() }
+                .animation(Theme.Motion.bouncy, value: active.map(\.id))
+                .animation(Theme.Motion.bouncy, value: invalid.map(\.id))
+                // ...but not while typing into the contact search.
+                .animation(nil, value: searchText)
+            } else if jobStore.isLoading || isResolving {
+                LoadingState()
+            } else {
+                ContentUnavailableView {
+                    Label("Company Not Found", systemImage: "building.2")
+                } description: {
+                    Text("This company may have been deleted.")
                 }
             }
         }
-        .navigationTitle(job?.company ?? "")
+        .paperScreen()
+        .navigationTitle(job?.company ?? "Company")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, prompt: "Search recruiters")
+        .searchable(text: $searchText, prompt: "Search contacts")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if isSelecting {
-                    GlassDoneButton { exitSelection() }
+                if selection.isSelecting {
+                    DoneButton { selection.exit() }
                 } else {
                     Menu {
                         Button {
+                            editingCompany = job
+                        } label: {
+                            Label("Edit Company", systemImage: "pencil")
+                        }
+                        Button {
+                            withAnimation(Theme.Motion.liquid) { isContactsExpanded = true }
                             isAdding = true
                         } label: {
-                            Label("Add Cold Mail", systemImage: "plus")
+                            Label("Add Contact", systemImage: "plus")
                         }
                         if let job, !job.contacts.isEmpty {
                             Button {
-                                enterSelection()
+                                withAnimation(Theme.Motion.liquid) { isContactsExpanded = true }
+                                selection.enter()
                             } label: {
-                                Label("Select", systemImage: "checkmark.circle")
+                                Label("Select Contacts", systemImage: "checkmark.circle")
                             }
                         }
                     } label: {
@@ -149,40 +167,30 @@ struct JobDetailView: View {
             }
         }
         .selectionActions(
-            isSelecting: isSelecting,
+            isSelecting: selection.isSelecting,
             count: selection.count,
-            noun: SelectionNoun(singular: "cold mail", plural: "cold mails"),
+            noun: SelectionNoun(singular: "contact", plural: "contacts"),
             confirmingDelete: $confirmingDelete,
-            deleteMessage: "This permanently deletes the selected recruiters from the shared database, for every user. Sent ones are kept. This can't be undone.",
+            deleteMessage: "This permanently deletes the selected contacts from the shared database, for every user. Sent ones are kept. This can't be undone.",
             deletableCount: deletableCount,
             sendableCount: sendableCount,
             onSend: {
-                let chosen = selection
-                exitSelection()
+                let chosen = selection.ids
+                selection.exit()
                 startCompose(preselect: chosen)
             },
-            bulkAction: validityAction
-        ) { deleteSelected() }
-        .confirmationDialog(
-            "Delete \(pendingDelete.map { $0.name.isEmpty ? $0.email : $0.name } ?? "recruiter")?",
-            isPresented: Binding(get: { pendingDelete != nil },
-                                 set: { if !$0 { pendingDelete = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                if let contact = pendingDelete {
-                    Task { await jobStore.deleteContact(contact) }
-                }
-                pendingDelete = nil
-            }
-        } message: {
-            Text("This permanently deletes the recruiter from the shared database, for every user. This can't be undone.")
+            bulkAction: validityAction,
+            onDelete: deleteSelected
+        )
+        .uniformDeleteAlert(
+            item: $pendingDelete,
+            title: { "Delete “\($0.displayName)”?" },
+            message: "This permanently deletes the contact from the shared database, for every user. This can't be undone."
+        ) { contact in
+            Task { await jobStore.deleteContact(contact) }
         }
-        .sheet(isPresented: $isAdding) {
-            ContactFormView { new in
-                if let job { Task { await jobStore.addContact(new, to: job) } }
-            }
-        }
+        .companyEditor(for: $editingCompany)
+        .addContactSheet(isPresented: $isAdding, initialCompany: job)
         .sheet(item: $detailContact) { contact in
             ContactDetailView(
                 contact: contact,
@@ -197,162 +205,268 @@ struct JobDetailView: View {
         .sheet(item: $composeRequest) { request in
             if let job { SendMailView(job: job, preselect: request.preselect) }
         }
-    }
-
-    /// Carries its own action, like the Companies and Templates empty states —
-    /// pointing at a menu the user then has to go hunting for is a dead end.
-    @ViewBuilder
-    private var emptyState: some View {
-        if searchText.isEmpty {
-            ContentUnavailableView {
-                Label("No Cold Mails", systemImage: "envelope")
-            } description: {
-                Text("Add a recruiter to start sending.")
-            } actions: {
-                Button {
-                    isAdding = true
-                } label: {
-                    Label("Add Cold Mail", systemImage: "plus")
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        } else {
-            ContentUnavailableView.search(text: searchText)
+        .undoBanner()
+        .task(id: jobID) {
+            await jobStore.loadCompanyIfNeeded(id: jobID)
+            isResolving = false
         }
     }
 
-    /// Open the compose sheet. Pass `preselect` to send to specific contacts
-    /// (a single row or the current selection); nil defaults to all unsent.
-    ///
-    /// Presented via `.sheet(item:)` (not `isPresented:`) so every tap gets a
-    /// fresh `ComposeRequest` identity — otherwise SwiftUI can reuse the prior
-    /// `SendMailView`'s `@State` selection when reopened in quick succession,
-    /// leaking the previous contact's selection into the new sheet.
+    // MARK: - Company Details Card
+
+    private func companyHeaderCard(_ job: Job) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                MonogramAvatar(company: job.company)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(job.company)
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(Color.ink)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                    if let sector = job.sector, !sector.isEmpty {
+                        // Two lines, not one: sectors run long ("Internet and
+                        // consumer products"), and a sector cut to "Internet
+                        // and c…" says less than no sector at all.
+                        Text(sector)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.inkMuted)
+                            .lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // An icon, not a labelled pill: the word "Edit" at large text
+                // sizes took the width the company's own name needed.
+                Button {
+                    Haptics.press()
+                    editingCompany = job
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.clay)
+                        .frame(width: 22, height: 22)
+                }
+                .secondaryButton()
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("Edit company")
+            }
+
+            domainChips(job)
+
+            Divider().overlay(Color.hairline)
+
+            // Figures over captions in three equal columns — side by side, a
+            // figure and its word competed for one line and "Contacts" broke
+            // into "Con-tacts".
+            HStack(spacing: 0) {
+                Metric(value: job.contacts.count, caption: "Contacts", size: 22)
+                MetricDivider()
+                Metric(value: job.contacts.filter(\.isSent).count, caption: "Sent", size: 22)
+                MetricDivider()
+                Metric(value: job.repliedContacts.count, caption: "Replied",
+                       tint: job.repliedContacts.isEmpty ? .ink : .olive, size: 22)
+            }
+        }
+        .padding(16)
+        .panel()
+    }
+
+    /// Every domain the company answers to, wrapping onto as many lines as it
+    /// needs. Listed ones are solid; ones only seen on contacts' addresses are
+    /// dashed, and tapping one opens the editor where it's a one-tap add.
+    @ViewBuilder
+    private func domainChips(_ job: Job) -> some View {
+        let domains = job.allDomains
+        if domains.isEmpty {
+            Button {
+                editingCompany = job
+            } label: {
+                Label("Add a mail domain", systemImage: "at")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.inkFaint)
+            }
+            .buttonStyle(.plain)
+        } else {
+            WrappingHStack(spacing: 6, lineSpacing: 6) {
+                ForEach(domains, id: \.self) { domain in
+                    let listed = job.domains.contains(domain)
+                    DomainChip(domain: domain, listed: listed)
+                        .onTapGesture { if !listed { editingCompany = job } }
+                        .accessibilityAddTraits(listed ? [] : .isButton)
+                }
+            }
+        }
+    }
+
+    // MARK: - Contacts Section & Toggle Button
+
+    private func contactsToggleButton(job: Job, active: Int, invalid: Int) -> some View {
+        Button {
+            Haptics.tap()
+            withAnimation(Theme.Motion.liquid) { isContactsExpanded.toggle() }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "person.2.fill")
+                    .font(.body)
+                    .foregroundStyle(Color.clay)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Contacts")
+                        .font(.headline)
+                        .foregroundStyle(Color.ink)
+                    // The full breakdown when it fits on one line, the active
+                    // count alone when the avatar peek needs the room.
+                    ViewThatFits(in: .horizontal) {
+                        Text(invalid == 0 ? "\(active) active" : "\(active) active · \(invalid) invalid")
+                        Text("\(active) active")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Color.inkMuted)
+                    .lineLimit(1)
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 8)
+
+                // Collapsed, the row previews who's inside rather than only how
+                // many — the faces are what you'd open it to look for.
+                if !showsContacts && !job.contacts.isEmpty {
+                    avatarPeek(job.validContacts.isEmpty ? job.contacts : job.validContacts)
+                        .transition(LiquidMaterialize(scale: 0.7, blur: 6, anchor: .trailing))
+                }
+
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.inkFaint)
+                    .rotationEffect(.degrees(showsContacts ? 180 : 0))
+            }
+            .padding(14)
+            .contentShape(.rect)
+            .panel()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Contacts, \(job.contacts.count)")
+        .accessibilityValue(showsContacts ? "Expanded" : "Collapsed")
+        .accessibilityHint(showsContacts ? "Collapses the list" : "Shows the list")
+    }
+
+    /// Up to three overlapping avatars, then a "+N".
+    private func avatarPeek(_ contacts: [Contact]) -> some View {
+        let shown = contacts.prefix(3)
+        return HStack(spacing: -8) {
+            ForEach(shown) { contact in
+                MonogramAvatar(text: contact.displayName, size: 26)
+                    .overlay(Circle().strokeBorder(Color.paperRaised, lineWidth: 2))
+            }
+            if contacts.count > shown.count {
+                Text("+\(contacts.count - shown.count)")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Color.inkMuted)
+                    .padding(.leading, 12)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var emptyContactsNotice: some View {
+        VStack(spacing: 12) {
+            Text("No contacts listed for this company yet.")
+                .font(.subheadline)
+                .foregroundStyle(Color.inkMuted)
+
+            Button {
+                isAdding = true
+            } label: {
+                Label("Add Contact", systemImage: "plus")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .primaryButton()
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+        .panel()
+    }
+
+    /// Open the compose sheet. Pass `preselect` to send to specific contacts.
     private func startCompose(preselect: Set<Contact.ID>? = nil) {
         composeRequest = ComposeRequest(preselect: preselect)
     }
 
-    private func enterSelection() {
-        selection = []
-        Haptics.press()
-        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
-    }
-
-    /// Entered by holding a row, with that contact already picked.
-    private func beginSelection(with id: Contact.ID) {
-        selection = [id]
-        withAnimation(Theme.Motion.bouncy) { isSelecting = true }
-    }
-
-    private func exitSelection() {
-        Haptics.tap(0.5)
-        withAnimation(Theme.Motion.bouncy) { isSelecting = false }
-        selection = []
-    }
-
-    /// One slot that flips meaning, like Companies' Track/Untrack: once everything
-    /// selected is already invalid the only useful bulk action is putting it back,
-    /// so the button becomes "Mark Valid" rather than sitting there as a no-op.
     private var validityAction: SelectionBulkAction? {
         guard let job else { return nil }
-        let selected = job.contacts.filter { selection.contains($0.id) }
-        let allInvalid = !selected.isEmpty && selected.allSatisfy { !$0.isValid }
+        let picked = job.contacts.filter { selection.contains($0.id) }
+        guard !picked.isEmpty else { return nil }
+        let allInvalid = picked.allSatisfy { !$0.isValid }
         return SelectionBulkAction(
             title: allInvalid ? "Mark Valid" : "Mark Invalid",
             systemImage: allInvalid ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
             tint: allInvalid ? Color.statusDone : Color.statusInvalid
         ) {
-            // Only flip the ones that need it, so re-marking a mixed selection
-            // doesn't rewrite rows that were already where they belong.
-            let ids = selected.filter { $0.isValid == allInvalid }.map(\.id)
-            if allInvalid { Haptics.success() } else { Haptics.thud() }
-            exitSelection()
+            let ids = Array(selection.ids)
+            selection.exit()
             Task { await jobStore.setValidity(ids, isValid: allInvalid) }
         }
     }
 
     private func deleteSelected() {
         guard let job else { return }
-        Haptics.thud()
-        // Sent mails are a permanent record — never delete them.
-        let toDelete = job.contacts.filter { selection.contains($0.id) && !$0.isSent }
-        Task {
-            for contact in toDelete {
-                await jobStore.deleteContact(contact)
-            }
-        }
-        exitSelection()
+        let toDelete = job.contacts.filter { selection.contains($0.id) }
+        selection.exit()
+        Task { await jobStore.deleteContacts(toDelete) }
     }
 
     @ViewBuilder
     private func contactRows(_ contacts: [Contact]) -> some View {
         ForEach(contacts) { contact in
-            if isSelecting {
-                ContactRow(contact: contact)
-            } else {
-                // Invalid contacts lose the send button outright — the surest way
-                // to say "not this one" is for the control not to be there.
-                ContactRow(contact: contact, onSend: contact.isValid && contact.email.contains("@")
-                           ? { startCompose(preselect: [contact.id]) } : nil)
-                    .contentShape(Rectangle())
-                    .onTapGesture { detailContact = contact }
-                    // Gesture-only, not `selectableRow`: this row carries its own
-                    // send button, and a button nested inside a button stops
-                    // receiving taps.
-                    .holdToSelect(isSelecting: isSelecting) {
-                        beginSelection(with: contact.id)
+            ContactRow(
+                contact: contact,
+                onSend: contact.isValid ? { startCompose(preselect: [contact.id]) } : nil
+            )
+            .tag(contact.id)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if selection.isSelecting {
+                    selection.toggle(contact.id)
+                } else {
+                    detailContact = contact
+                }
+            }
+            .holdToSelect(isSelecting: selection.isSelecting) {
+                selection.begin(with: contact.id)
+            }
+            .swipeActions(edge: .trailing) {
+                if !contact.isSent {
+                    Button(role: .destructive) {
+                        Haptics.warning()
+                        pendingDelete = contact
+                    } label: {
+                        Label("Delete", systemImage: "trash")
                     }
-                    // Sent mails are a permanent record, so no delete swipe.
-                    .swipeActions(edge: .trailing) {
-                        if !contact.isSent {
-                            Button(role: .destructive) {
-                                Haptics.warning()
-                                pendingDelete = contact
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
-                    }
-                    // Leading edge, opposite delete: this is the reversible,
-                    // non-destructive way to take a contact out of rotation, and
-                    // the same swipe brings it back.
-                    .swipeActions(edge: .leading) {
-                        Button {
-                            // Two directions, two tones: ruling someone out is a
-                            // flat knock, putting them back is the success chime.
-                            if contact.isValid { Haptics.thud() } else { Haptics.success() }
-                            Task { await jobStore.setValidity([contact.id], isValid: !contact.isValid) }
-                        } label: {
-                            Label(contact.isValid ? "Invalid" : "Valid",
-                                  systemImage: contact.isValid
-                                      ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        }
-                        .tint(contact.isValid ? Color.statusInvalid : Color.statusDone)
-                    }
+                }
+            }
+            .swipeActions(edge: .leading) {
+                Button {
+                    if contact.isValid { Haptics.thud() } else { Haptics.success() }
+                    Task { await jobStore.setValidity([contact.id], isValid: !contact.isValid) }
+                } label: {
+                    Label(contact.isValid ? "Invalid" : "Valid",
+                          systemImage: contact.isValid
+                              ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                }
+                .tint(contact.isValid ? Color.statusInvalid : Color.statusDone)
             }
         }
     }
 }
 
-/// A single cold-mail row: icon, recruiter name, position, a status pill, and a
-/// send button for sending (or re-sending).
-///
-/// A contact marked invalid keeps the same layout — it's still the same person,
-/// and a different-shaped row would read as a different kind of thing — but every
-/// signal is turned down: the monogram loses its colour, the text drops to
-/// secondary, and the send button is gone, replaced by an "Invalid" chip that
-/// says which of the two groups you're looking at even mid-scroll, when the
-/// section header is off screen.
 private struct ContactRow: View {
     let contact: Contact
     var onSend: (() -> Void)? = nil
 
-    private var title: String {
-        contact.name.isEmpty ? contact.email : contact.name
-    }
 
-    /// Never repeats the title. A contact with no name is already titled by its
-    /// email, and falling back to the email again printed the same string twice.
     private var subtitle: String? {
         if !contact.position.isEmpty { return contact.position }
         return contact.name.isEmpty ? nil : contact.email
@@ -360,15 +474,12 @@ private struct ContactRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // A monogram rather than the identical envelope glyph every row used
-            // to get: these are people, and the colour makes a long recruiter list
-            // scannable — the same treatment they already get in Activity.
-            MonogramAvatar(text: title, size: Theme.Avatar.small)
+            MonogramAvatar(text: contact.displayName, size: Theme.Avatar.small)
                 .grayscale(contact.isValid ? 0 : 1)
                 .opacity(contact.isValid ? 1 : 0.5)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
+                Text(contact.displayName)
                     .font(.headline)
                     .foregroundStyle(contact.isValid ? Color.ink : Color.inkMuted)
                     .lineLimit(1)
@@ -383,10 +494,6 @@ private struct ContactRow: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
-                // One chip, never a stack. Each state outranks the one below it:
-                // "Invalid" is the only fact that matters for a ruled-out contact,
-                // and once someone has replied, when the mail went out stops being
-                // the useful half.
                 if !contact.isValid {
                     InvalidPill()
                 } else if contact.hasReplied {
@@ -405,25 +512,17 @@ private struct ContactRow: View {
                             .frame(width: 36, height: 36)
                             .background(.tint.opacity(0.12), in: Circle())
                     }
-                    // Its own press treatment rather than the row's: the button is
-                    // a target inside a card, and it should dip on its own.
                     .buttonStyle(BouncyPress(scale: 0.82))
-                    .accessibilityLabel(contact.isSent ? "Send again to \(title)" : "Send to \(title)")
+                    .accessibilityLabel(contact.isSent ? "Send again to \(contact.displayName)" : "Send to \(contact.displayName)")
                 }
             }
         }
         .padding(12)
         .panelAccented(cardAccent)
-        // The chip that replaces another one (Sent becoming Replied, anything
-        // becoming Invalid) springs rather than cross-fades.
         .animation(Theme.Motion.pop, value: contact.isValid)
         .animation(Theme.Motion.pop, value: contact.hasReplied)
     }
 
-    /// The rule down the card's leading edge, and the only colour on it. It marks
-    /// state, not identity: olive once they've answered, faint when they've been
-    /// ruled out, and nothing at all for the ordinary case — a list where every
-    /// row is marked is a list with no marks.
     private var cardAccent: Color? {
         if !contact.isValid { return .inkFaint }
         return contact.hasReplied ? .statusDone : nil

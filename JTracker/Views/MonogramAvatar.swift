@@ -41,3 +41,10 @@ struct MonogramAvatar: View {
         .background(accent, in: shape)
     }
 }
+
+extension MonogramAvatar {
+    /// A company's avatar: the building glyph on the squarer silhouette.
+    init(company name: String, size: CGFloat = Theme.Avatar.medium) {
+        self.init(text: name, size: size, systemImage: "building.2.fill")
+    }
+}

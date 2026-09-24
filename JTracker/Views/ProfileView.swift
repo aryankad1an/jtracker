@@ -99,7 +99,7 @@ struct ProfileView: View {
         } footer: {
             Text(replySync.needsReconnect
                  ? "Reconnecting signs in to the same account and grants read access. Nothing is deleted."
-                 : "Used to send your cold mails and to check which ones were answered.")
+                 : "Used to send your mails and to check which ones were answered.")
         }
     }
 

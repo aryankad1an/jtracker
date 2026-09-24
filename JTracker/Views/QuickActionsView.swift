@@ -40,6 +40,7 @@ struct QuickActionsView: View {
     @State private var summaryItem: ActivityEntry?
     @State private var sendBatch: SendBatch?
     @State private var path = NavigationPath()
+    @Namespace private var zoom
 
     /// The silences worth cutting at. Coarse on purpose: a day-by-day slider
     /// would invite fiddling with a number that only ever means "a few days", "a
@@ -73,11 +74,14 @@ struct QuickActionsView: View {
                 .padding(.top, 4)
                 .padding(.bottom, 24)
             }
-            .background(Color.paper)
+            .paperScreen()
             .navigationTitle("Quick Actions")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: String.self) { companyID in
+                // The card the user tapped grows into the company screen, and
+                // shrinks back into its place on the way out.
                 JobDetailView(jobID: companyID)
+                    .navigationTransition(.zoom(sourceID: companyID, in: zoom))
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -102,7 +106,7 @@ struct QuickActionsView: View {
                 MailSummaryView(contact: item.contact, company: item.company)
             }
             .sheet(item: $sendBatch) { batch in
-                SuggestedSendView(recipients: batch.recipients) {
+                SuggestedSendView(title: batch.title, recipients: batch.recipients) {
                     sendBatch = nil
                     selection.removeAll()
                 }
@@ -148,7 +152,7 @@ struct QuickActionsView: View {
                     title: emptyWaitingTitle,
                     systemImage: insights.totalSent == 0 ? "paperplane" : "checkmark.seal.fill",
                     message: emptyWaitingMessage,
-                    tint: insights.totalSent == 0 ? .secondary : .statusDone
+                    tint: insights.totalSent == 0 ? .inkMuted : .statusDone
                 )
             } else {
                 laneCaption("\(mails.count) unanswered"
@@ -185,7 +189,7 @@ struct QuickActionsView: View {
                 tint: .statusDone
             )
         } else {
-            VStack(spacing: 12) {
+            LazyVStack(spacing: 12) {
                 laneCaption("\(insights.repliedPeople) "
                             + (insights.repliedPeople == 1 ? "person answered" : "people answered"))
                 ForEach(insights.replies) { entry in
@@ -198,12 +202,12 @@ struct QuickActionsView: View {
         }
     }
 
-    /// People who can still be cold-mailed and haven't been in the last month,
+    /// People who can still be mailed and haven't been in the last month,
     /// gathered under the company they work at.
     ///
-    /// Grouped rather than flat because a cold mail is a decision about a
+    /// Grouped rather than flat because a mail is a decision about a
     /// *company* first — you go after Stripe, and then decide whether that means
-    /// one recruiter or all three. The card header ticks the whole company; the
+    /// one contact or all three. The card header ticks the whole company; the
     /// rows inside tick one person each, so the two ways of thinking about it
     /// cost the same single tap.
     ///
@@ -221,7 +225,7 @@ struct QuickActionsView: View {
             )
         } else {
             let people = groups.reduce(0) { $0 + $1.contacts.count }
-            VStack(spacing: 12) {
+            LazyVStack(spacing: 12) {
                 laneCaption("\(people) ready to reach out · "
                             + "\(groups.count) compan\(groups.count == 1 ? "y" : "ies")")
                 ForEach(groups, id: \.company.id) { group in
@@ -232,12 +236,20 @@ struct QuickActionsView: View {
                         onToggleCompany: { toggleAll(in: group.contacts) },
                         onToggleContact: { toggle($0, enabled: true) }
                     )
+                    .matchedTransitionSource(id: group.company.id, in: zoom)
                     .contextMenu {
                         Button("Open \(group.company.company)", systemImage: "building.2") {
                             path.append(group.company.id)
                         }
                     }
+                    .onAppear {
+                        if group.company.id == groups.last?.company.id {
+                            Task { await jobStore.loadMoreCompanies() }
+                        }
+                    }
                 }
+
+                if jobStore.isLoadingMoreCompanies { LoadingRow() }
             }
         }
     }
@@ -263,7 +275,7 @@ struct QuickActionsView: View {
     }
 
     private var emptyWaitingMessage: String {
-        if insights.totalSent == 0 { return "Send your first cold mail and this fills in." }
+        if insights.totalSent == 0 { return "Send your first mail and this fills in." }
         if waitingDays > 0 && !insights.waitingMails.isEmpty {
             return "\(insights.waitingMails.count) still unanswered, all newer than \(waitingDays) days."
         }
@@ -369,9 +381,7 @@ struct QuickActionsView: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.clay)
-                .buttonBorderShape(.capsule)
+                .filledButton()
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -381,9 +391,7 @@ struct QuickActionsView: View {
             .glassEffect(.regular, in: .rect(cornerRadius: Theme.Radius.card))
             .padding(.horizontal, Theme.Space.gutter)
             .padding(.bottom, 6)
-            .transition(.move(edge: .bottom)
-                .combined(with: .scale(scale: 0.92, anchor: .bottom))
-                .combined(with: .opacity))
+            .transition(.glassRise)
             .animation(Theme.Motion.bouncy, value: all.count)
             .animation(Theme.Motion.pop, value: selection)
         }
@@ -401,7 +409,7 @@ struct QuickActionsView: View {
     /// because the fix already exists — `is_valid` — and this is the only screen
     /// that knows the address is dead.
     private var bouncedContacts: [Contact] {
-        let ids = replySync.bouncedRecruiterIDs
+        let ids = replySync.bouncedContactIDs
         guard !ids.isEmpty else { return [] }
         return jobStore.allCompanies
             .flatMap(\.contacts)
@@ -431,8 +439,7 @@ struct QuickActionsView: View {
                 Task { await jobStore.setValidity(contacts.map(\.id), isValid: false) }
             }
             .font(.subheadline.weight(.semibold))
-            .buttonStyle(.borderedProminent)
-            .tint(.statusInvalid)
+            .primaryButton(.statusInvalid)
             .fixedSize()
         }
         .padding(14)
@@ -441,13 +448,8 @@ struct QuickActionsView: View {
     }
 
     private func sync() async {
-        await jobStore.syncReplies(using: replySync)
+        await jobStore.syncReplies(using: replySync, forceFullCheck: true)
     }
-}
-
-private struct SendBatch: Identifiable {
-    let id = UUID()
-    let recipients: [(contact: Contact, company: String)]
 }
 
 // MARK: - Lane transition
@@ -559,7 +561,7 @@ private struct StatusStrip: View {
             if sync.isSyncing && sync.progress.total > 0 {
                 ProgressView(value: sync.progress.fraction)
                     .tint(.clay)
-                    .transition(.scale(scale: 0.9, anchor: .top).combined(with: .opacity))
+                    .transition(LiquidMaterialize(scale: 0.9, blur: 8, anchor: .top))
             }
 
             HStack(spacing: 8) {
@@ -589,7 +591,7 @@ private struct StatusStrip: View {
                     Text(sync.isSyncing ? "Checking…" : "Check now")
                         .font(.caption.weight(.semibold))
                 }
-                .buttonStyle(.glass)
+                .secondaryButton()
                 .buttonBorderShape(.capsule)
                 .controlSize(.small)
                 .disabled(sync.isSyncing)
@@ -642,7 +644,7 @@ private struct WaitingRow: View {
     let isSelected: Bool
 
     private var name: String {
-        mail.contact.name.isEmpty ? mail.contact.email : mail.contact.name
+        mail.contact.displayName
     }
 
     /// Silence, warming as it runs. The bands are the ones the old company cards
@@ -703,7 +705,7 @@ private struct WaitingRow: View {
 /// whole company and a row per person that ticks just them.
 ///
 /// It replaces the flat list of person cards the New lane used to be. Spread
-/// out, three recruiters at one company read as three unrelated decisions, and
+/// out, three contacts at one company read as three unrelated decisions, and
 /// mailing all of them meant three taps in three different places on the
 /// screen; gathered under the name, they read as what they are — one company,
 /// and a choice of how wide to go at it.
@@ -738,8 +740,7 @@ private struct CompanyGroupCard: View {
                     SelectMark(isSelected: isWhole, isEnabled: true,
                                isPartial: pickedCount > 0)
 
-                    MonogramAvatar(text: company, size: Theme.Avatar.small,
-                                   systemImage: "building.2.fill")
+                    MonogramAvatar(company: company, size: Theme.Avatar.small)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(company)
@@ -785,7 +786,7 @@ private struct GroupPersonRow: View {
     let isSelected: Bool
 
     private var name: String {
-        contact.name.isEmpty ? contact.email : contact.name
+        contact.displayName
     }
 
     /// Never-mailed is the fact worth stating; for the rest it's how stale the
@@ -840,7 +841,7 @@ private struct ReplyCard: View {
     let entry: ActivityEntry
 
     private var name: String {
-        entry.contact.name.isEmpty ? entry.contact.email : entry.contact.name
+        entry.contact.displayName
     }
 
     /// Who actually answered. A reply from a different address than the one we

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A contact's details: recruiter fields (read-only until you tap the pencil,
+/// A contact's details: contact fields (read-only until you tap the pencil,
 /// then saved upstream to the shared database) plus this user's send history —
 /// tapping a history entry opens that sent mail.
 ///
@@ -52,7 +52,26 @@ struct ContactDetailView: View {
     /// Whether the edited fields are complete enough to save. (Not to be confused
     /// with `isContactValid`, which is whether the *person* is still worth mailing.)
     private var canSave: Bool {
-        RecruiterFields.isValid(email: email, name: name)
+        ContactFields.isValid(email: email, name: name)
+    }
+
+    /// True when at least one field differs from the last-saved state. Compared
+    /// the way `save()` would store it, so a field that only differs in what
+    /// saving normalizes away (an address's case) doesn't count as an edit.
+    private var hasChanges: Bool {
+        Self.editableFields(of: draft) != Self.editableFields(of: committed)
+    }
+
+    /// The form as `save()` would store it.
+    private var draft: Contact {
+        Contact(id: contact.id, email: email.lowercased(), name: name,
+                phone: phone.isEmpty ? nil : phone, position: position,
+                greetingName: greetingName.isEmpty ? nil : greetingName,
+                isValid: isContactValid)
+    }
+
+    nonisolated private static func editableFields(of contact: Contact) -> [String?] {
+        [contact.email.lowercased(), contact.name, contact.phone, contact.position, contact.greetingName]
     }
 
     var body: some View {
@@ -60,7 +79,7 @@ struct ContactDetailView: View {
             PaperForm {
                 if !isContactValid { invalidBanner }
 
-                RecruiterFields(email: $email, name: $name, position: $position, phone: $phone,
+                ContactFields(email: $email, name: $name, position: $position, phone: $phone,
                                 greetingName: $greetingName, isEditing: isEditing, header: company)
 
                 validitySection
@@ -82,7 +101,7 @@ struct ContactDetailView: View {
                             } label: {
                                 historyRow(send)
                             }
-                            .tint(.primary)
+                            .tint(.ink)
                         }
                     }
                 }
@@ -103,11 +122,11 @@ struct ContactDetailView: View {
                         Image(systemName: isEditing ? "xmark" : "pencil")
                             .contentTransition(.symbolEffect(.replace))
                     }
-                    .accessibilityLabel(isEditing ? "Cancel editing" : "Edit recruiter")
+                    .accessibilityLabel(isEditing ? "Cancel editing" : "Edit contact")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if isEditing {
-                        Button("Save") { save() }.disabled(!canSave)
+                        Button("Save") { save() }.disabled(!canSave || !hasChanges)
                     } else {
                         Button("Done") {
                             Haptics.tap(0.5)
@@ -117,6 +136,14 @@ struct ContactDetailView: View {
                 }
             }
             .task { await loadHistory() }
+            // An Undo tapped in the banner below reverts the stored contact; the
+            // form follows it, unless it's mid-edit and the typing is the user's.
+            .onChange(of: stored.map(Self.editableFields)) { _, _ in
+                guard let stored, !isEditing else { return }
+                committed = stored
+                cancelEdit()
+            }
+            .undoBanner()
             .sheet(item: $selectedSend) { send in
                 MailSummaryView(contact: contact(for: send), company: company)
             }
@@ -146,7 +173,7 @@ struct ContactDetailView: View {
     }
 
     /// The rule-in/rule-out control. Its own section under the fields: it isn't an
-    /// edit to the recruiter's details (it applies straight away, with no Save),
+    /// edit to the contact's details (it applies straight away, with no Save),
     /// and the footer spells out that it lands for every user.
     private var validitySection: some View {
         Section {
@@ -224,19 +251,14 @@ struct ContactDetailView: View {
     private func loadHistory() async {
         defer { isLoadingHistory = false }
         guard let email = jobStore.userEmail else { return }
-        history = (try? await SupabaseAPI.fetchSendHistory(userEmail: email, recruiterID: contact.id)) ?? []
+        history = (try? await SupabaseAPI.fetchSendHistory(userEmail: email, contactID: contact.id)) ?? []
     }
 
+    /// This contact as the store currently holds it.
+    private var stored: Contact? { jobStore.contact(id: contact.id) }
+
     private func save() {
-        let updated = Contact(
-            id: contact.id,
-            email: email.lowercased(),
-            name: name,
-            phone: phone.isEmpty ? nil : phone,
-            position: position,
-            greetingName: greetingName.isEmpty ? nil : greetingName,
-            isValid: isContactValid
-        )
+        let updated = draft
         committed = updated
         email = updated.email      // reflect the lowercased email back in the field
         Haptics.success()

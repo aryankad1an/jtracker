@@ -4,7 +4,7 @@ import Foundation
 /// would embarrass the sender most.
 struct TemplateFinding: Identifiable, Hashable {
     enum Severity: Int, Comparable {
-        /// Ships to the recruiter as visibly broken text.
+        /// Ships to the contact as visibly broken text.
         case error = 0
         /// Renders as a silent gap — grammatical damage, but not obviously a bug.
         case warning = 1
@@ -51,7 +51,7 @@ enum TemplateDiagnostics {
 
     /// Anything in braces that isn't a known placeholder. `MailContext.fill` only
     /// swaps exact matches, so `{Receiver-name}` survives into the sent mail and
-    /// the recruiter reads the raw token.
+    /// the contact reads the raw token.
     private static func unknownTokenFindings(in text: String) -> [TemplateFinding] {
         let known = Set(MailPlaceholder.allCases.map(\.token))
         var seen = Set<String>()
@@ -65,7 +65,7 @@ enum TemplateDiagnostics {
                 severity: .error,
                 title: "\(literal) isn't a placeholder",
                 detail: suggestion.map { "It will be sent exactly as written. Did you mean \($0)?" }
-                    ?? "It will be sent to the recruiter exactly as written, braces and all.",
+                    ?? "It will be sent to the contact exactly as written, braces and all.",
                 token: literal,
                 suggestion: suggestion
             ))

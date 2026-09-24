@@ -1,0 +1,1539 @@
+{
+  "_about": "Verified rules for the company pass. Every name here is a companies.name as it stood in the 2026-09-24 snapshot; the pipeline fails loudly if one no longer resolves (or resolves to a renamed row, by its new name). Rules are applied on top of the automatic ones: a work domain (reduced to the domain its owner registers) belongs to exactly one company, so rows sharing one are merged.",
+  "test_companies": {
+    "MN Corp": "The account owner's own test contacts (college and personal addresses); left untouched."
+  },
+  "relay_domains": {
+    "tophire.co": "TopHire, a recruiting agency: its recruiters stay under the company they hire for",
+    "hiresteezy.com": "Steezy Hire, a recruiting agency",
+    "weekday.tools": "Weekday's outreach relay (Weekday runs recruiting for its clients)",
+    "talentiser.com": "Talentiser, a recruiting agency",
+    "anzyglobal.com": "Anzy Global, a recruiting agency"
+  },
+  "junk_companies": {
+    "Example": "example.com is the reserved documentation domain",
+    "Domain": "email_not_unlocked@domain.com is a scraper placeholder, not an address",
+    "Sdf Asdf": "keyboard-mash test row",
+    "Sfdf Sdf": "keyboard-mash test row",
+    "Hgf Fdfg": "keyboard-mash test row",
+    "Sdfgsdfg Asdfgasd": "keyboard-mash test row",
+    "Sdfgsdfg Asdfgasdf": "keyboard-mash test row",
+    "Sdfgsdfg Asdfgasdfg": "keyboard-mash test row"
+  },
+  "typo_domains": {
+    "micron.con": "micron.com",
+    "salesfroce.com": "salesforce.com",
+    "slaesforce.com": "salesforce.com",
+    "wellfargo.com": "wellsfargo.com",
+    "gmaeskraft.com": "gameskraft.com",
+    "broadcom.cm": "broadcom.com"
+  },
+  "domain_moves": {
+    "med.ge.com": {
+      "to": "Gehealthcare",
+      "why": "med.ge.com is GE HealthCare's mail domain, not GE's"
+    },
+    "ivp.in": {
+      "to": "Ivpindia",
+      "why": "ivp.in is Indus Valley Partners; ivp.com is Institutional Venture Partners"
+    },
+    "cms.ac.in": {
+      "create": "CMS Business School (Jain University)",
+      "why": "cms.ac.in is a business school; cms.co.in is CMS Info Systems"
+    }
+  },
+  "merges": [
+    {
+      "into": "Airbnb",
+      "from": [
+        "Ext Airbnb"
+      ]
+    },
+    {
+      "into": "Bharti Airtel",
+      "from": [
+        "Careers Airtel",
+        "Airtel"
+      ]
+    },
+    {
+      "into": "ABB India",
+      "name": "ABB",
+      "from": [
+        "ABB Group",
+        "Ch Abb"
+      ]
+    },
+    {
+      "into": "AlphaGrep",
+      "from": [
+        "Alpha Grep"
+      ]
+    },
+    {
+      "into": "Amazon",
+      "from": [
+        "Ant Amazon",
+        "Amazon Lu"
+      ]
+    },
+    {
+      "into": "American Express",
+      "from": [
+        "Americanexpress"
+      ]
+    },
+    {
+      "into": "Angel One (Angel Broking)",
+      "name": "Angel One",
+      "from": [
+        "Angel One",
+        "Angelone",
+        "Angelbroking"
+      ]
+    },
+    {
+      "into": "ANSYS",
+      "from": [
+        "Ansysindia"
+      ]
+    },
+    {
+      "into": "Arista Networks",
+      "from": [
+        "Aristanetworks",
+        "Arista"
+      ]
+    },
+    {
+      "into": "BankBazaar",
+      "from": [
+        "Bankbazaar Sg"
+      ]
+    },
+    {
+      "into": "Bank of America",
+      "from": [
+        "Baml"
+      ]
+    },
+    {
+      "into": "Pilani Bits Pilani",
+      "name": "BITS Pilani",
+      "from": [
+        "Hyderabad Bits Pilani",
+        "Goa Bits Pilani",
+        "Alumni Bits Pilani"
+      ]
+    },
+    {
+      "into": "Mba Christuniversity",
+      "name": "Christ University",
+      "from": [
+        "Msw Christuniversity"
+      ]
+    },
+    {
+      "into": "Citigroup (Citi)",
+      "from": [
+        "Citigroup",
+        "Citi Com Mx"
+      ]
+    },
+    {
+      "into": "Coforge",
+      "from": [
+        "Coforgetech"
+      ]
+    },
+    {
+      "into": "CSG Systems",
+      "name": "CSG",
+      "from": [
+        "Csgi"
+      ]
+    },
+    {
+      "into": "Curefit",
+      "name": "Cult.fit",
+      "from": [
+        "Cult.fit",
+        "Cultfit",
+        "Cure Fit"
+      ]
+    },
+    {
+      "into": "Dell Technologies",
+      "from": [
+        "Dellteam"
+      ]
+    },
+    {
+      "into": "Deloitte",
+      "from": [
+        "Deloitte Ca"
+      ]
+    },
+    {
+      "into": "D. E. Shaw",
+      "from": [
+        "D. E. Shaw India"
+      ]
+    },
+    {
+      "into": "Ea",
+      "name": "Electronic Arts",
+      "from": [
+        "Electronic Arts"
+      ]
+    },
+    {
+      "into": "Edelweiss",
+      "from": [
+        "Edelcap",
+        "Edelweissfin"
+      ]
+    },
+    {
+      "into": "Eightfold AI",
+      "from": [
+        "Eightfold"
+      ]
+    },
+    {
+      "into": "Enphase",
+      "name": "Enphase Energy",
+      "from": [
+        "Enphaseenergy"
+      ]
+    },
+    {
+      "into": "Epam",
+      "name": "EPAM Systems",
+      "from": [
+        "EPAM Systems"
+      ]
+    },
+    {
+      "into": "Epicgames",
+      "name": "Epic Games",
+      "from": [
+        "Epic Games"
+      ]
+    },
+    {
+      "into": "Fi Money (Epifi)",
+      "name": "Fi Money",
+      "from": [
+        "Fi Money"
+      ]
+    },
+    {
+      "into": "Expedia Group",
+      "from": [
+        "Expedia"
+      ]
+    },
+    {
+      "into": "Ernst & Young (EY)",
+      "from": [
+        "EY India",
+        "Gds Ey",
+        "EY"
+      ]
+    },
+    {
+      "into": "Meta (Facebook)",
+      "name": "Meta",
+      "from": [
+        "Facebook",
+        "Meta"
+      ]
+    },
+    {
+      "into": "Fidelity (FMR)",
+      "name": "Fidelity Investments",
+      "from": [
+        "Fidelity",
+        "Fidelity Investments"
+      ]
+    },
+    {
+      "into": "Flipkart",
+      "from": [
+        "Partner Flipkart"
+      ]
+    },
+    {
+      "into": "Fractal Analytics",
+      "from": [
+        "Fractalanalytics"
+      ]
+    },
+    {
+      "into": "Fynd",
+      "from": [
+        "Gofynd"
+      ]
+    },
+    {
+      "into": "Gehealthcare",
+      "name": "GE HealthCare",
+      "from": [
+        "Med Ge",
+        "GE HealthCare"
+      ]
+    },
+    {
+      "into": "Go Jek",
+      "name": "Gojek",
+      "from": [
+        "Gojek"
+      ]
+    },
+    {
+      "into": "GamesKraft",
+      "from": [
+        "Gmaeskraft"
+      ]
+    },
+    {
+      "into": "Goldman Sachs",
+      "from": [
+        "Ny Email Gs",
+        "Goldmansachs"
+      ]
+    },
+    {
+      "into": "Google",
+      "from": [
+        "Goo Gle"
+      ]
+    },
+    {
+      "into": "Grab",
+      "from": [
+        "Grab (GrabTaxi)"
+      ]
+    },
+    {
+      "into": "Graviton Trading",
+      "name": "Graviton Research Capital",
+      "from": [
+        "Gravitonresearch",
+        "Graviton Research Capital LLP"
+      ]
+    },
+    {
+      "into": "Zomato",
+      "name": "Eternal",
+      "from": [
+        "Blinkit (Zomato)",
+        "Grofers"
+      ],
+      "why": "Standing instruction (2026-08-30): Zomato, Blinkit and every other Eternal brand are one company, Eternal"
+    },
+    {
+      "into": "Hbc",
+      "name": "Hudson's Bay Company",
+      "from": [
+        "Partners Hbc Ca"
+      ]
+    },
+    {
+      "into": "Heizen",
+      "from": [
+        "Heizen Work"
+      ]
+    },
+    {
+      "into": "Hevodata",
+      "name": "Hevo Data",
+      "from": [
+        "Hevo Data"
+      ]
+    },
+    {
+      "into": "Hcl",
+      "name": "HCLTech",
+      "from": [
+        "HCLTech"
+      ]
+    },
+    {
+      "into": "HSBC",
+      "from": [
+        "HSBC India"
+      ]
+    },
+    {
+      "into": "IBM",
+      "from": [
+        "IBM India"
+      ]
+    },
+    {
+      "into": "ICICI Bank",
+      "from": [
+        "Ext Icicibank"
+      ]
+    },
+    {
+      "into": "IDFC First Bank",
+      "from": [
+        "IDFC Limited",
+        "Idfcbank"
+      ],
+      "why": "IDFC Ltd merged into IDFC First Bank in 2024"
+    },
+    {
+      "into": "Iragecapital",
+      "name": "iRAGE Capital",
+      "from": [
+        "iRAGE Capital",
+        "Irage"
+      ]
+    },
+    {
+      "into": "ION Group",
+      "from": [
+        "Iontrading"
+      ]
+    },
+    {
+      "into": "Itbhu",
+      "name": "IIT (BHU) Varanasi",
+      "from": [
+        "Iitbhu"
+      ]
+    },
+    {
+      "into": "JPMorgan Chase",
+      "from": [
+        "JPMorgan",
+        "Jpmorganchase",
+        "Chase"
+      ]
+    },
+    {
+      "into": "Kla",
+      "name": "KLA",
+      "from": [
+        "Kla Tencor"
+      ]
+    },
+    {
+      "into": "Kkr",
+      "name": "KKR",
+      "from": [
+        "Consultant Kkr"
+      ]
+    },
+    {
+      "into": "Kotak Mahindra Group",
+      "from": [
+        "Kotak"
+      ]
+    },
+    {
+      "into": "GoMotive (Motive)",
+      "name": "Motive",
+      "from": [
+        "Keeptruckin"
+      ]
+    },
+    {
+      "into": "UKG (Ultimate Kronos Group)",
+      "from": [
+        "Kronos (UKG)"
+      ]
+    },
+    {
+      "into": "LinkedIn",
+      "from": [
+        "E Linkedin"
+      ]
+    },
+    {
+      "into": "Lowes",
+      "name": "Lowe's",
+      "from": [
+        "Lowe's"
+      ]
+    },
+    {
+      "into": "LTIMindtree",
+      "from": [
+        "LTI (L&T Infotech)",
+        "Mindtree"
+      ]
+    },
+    {
+      "into": "MathWorks",
+      "from": [
+        "Groups Mathworks",
+        "Mathworks Fr"
+      ]
+    },
+    {
+      "into": "McKinsey & Company",
+      "from": [
+        "External Mckinsey"
+      ]
+    },
+    {
+      "into": "Mercedes Benz",
+      "name": "Mercedes-Benz",
+      "from": [
+        "Mercedes-Benz"
+      ]
+    },
+    {
+      "into": "Michaelpage",
+      "name": "Michael Page",
+      "from": [
+        "Michaelpage Com Mx"
+      ]
+    },
+    {
+      "into": "Micron",
+      "from": [
+        "Micron Con"
+      ]
+    },
+    {
+      "into": "Microsoft",
+      "from": [
+        "Exchange Microsoft"
+      ]
+    },
+    {
+      "into": "Royal Bank of Scotland (NatWest)",
+      "name": "NatWest Group",
+      "from": [
+        "Rbs",
+        "Natwest"
+      ]
+    },
+    {
+      "into": "Navi Technologies",
+      "from": [
+        "Navi"
+      ]
+    },
+    {
+      "into": "Nestle USA",
+      "name": "Nestlé",
+      "from": [
+        "In Nestle"
+      ]
+    },
+    {
+      "into": "Netflix",
+      "from": [
+        "Jobs Netflix"
+      ]
+    },
+    {
+      "into": "Newrelic",
+      "name": "New Relic",
+      "from": [
+        "New Relic"
+      ]
+    },
+    {
+      "into": "NK Securities",
+      "from": [
+        "Nksecurities"
+      ]
+    },
+    {
+      "into": "Bs Nttdata",
+      "name": "NTT DATA",
+      "from": [
+        "NTT DATA"
+      ]
+    },
+    {
+      "into": "Ola Cabs",
+      "from": [
+        "Ola"
+      ]
+    },
+    {
+      "into": "Paloaltonetworks",
+      "name": "Palo Alto Networks",
+      "from": [
+        "Palo Alto Networks"
+      ]
+    },
+    {
+      "into": "Jp Panasonic",
+      "name": "Panasonic",
+      "from": [
+        "Eu Panasonic",
+        "Ext Us Panasonic",
+        "In Panasonic",
+        "Us Panasonic",
+        "Panasonic"
+      ]
+    },
+    {
+      "into": "Pegasystems (Pega)",
+      "from": [
+        "In Pega"
+      ]
+    },
+    {
+      "into": "Porter",
+      "from": [
+        "Theporter"
+      ]
+    },
+    {
+      "into": "Postman",
+      "from": [
+        "Getpostman"
+      ]
+    },
+    {
+      "into": "PwC India",
+      "name": "PwC",
+      "from": [
+        "PwC"
+      ]
+    },
+    {
+      "into": "Qatarairways Com Qa",
+      "name": "Qatar Airways",
+      "from": [
+        "In Qatarairways"
+      ]
+    },
+    {
+      "into": "QI Capital",
+      "from": [
+        "QI-Cap Securities"
+      ]
+    },
+    {
+      "into": "Qnance",
+      "name": "Qnance Research",
+      "from": [
+        "Qnance Research"
+      ]
+    },
+    {
+      "into": "Quantboxtrading",
+      "name": "Quantbox Research",
+      "from": [
+        "Quantbox Research"
+      ]
+    },
+    {
+      "into": "Qualcomm India",
+      "name": "Qualcomm",
+      "from": [
+        "Qualcomm"
+      ]
+    },
+    {
+      "into": "Qualitest",
+      "from": [
+        "Qualitestgroup"
+      ]
+    },
+    {
+      "into": "Rakuten",
+      "from": [
+        "Mail Rakuten"
+      ]
+    },
+    {
+      "into": "Rnftechnologies",
+      "name": "RnF Technologies",
+      "from": [
+        "Rnf"
+      ]
+    },
+    {
+      "into": "Salesforce",
+      "from": [
+        "Salesfroce",
+        "Slaesforce"
+      ]
+    },
+    {
+      "into": "Samsung",
+      "from": [
+        "Partner Samsung"
+      ]
+    },
+    {
+      "into": "Publicis Sapient",
+      "from": [
+        "Sapientag2"
+      ]
+    },
+    {
+      "into": "SAP SE",
+      "from": [
+        "SAP"
+      ]
+    },
+    {
+      "into": "ServiceNow",
+      "from": [
+        "Service Now",
+        "Servicenow Ind"
+      ]
+    },
+    {
+      "into": "Slack Corp",
+      "name": "Slack",
+      "from": [
+        "Slack"
+      ]
+    },
+    {
+      "into": "Slb",
+      "name": "SLB",
+      "from": [
+        "Exchange Slb"
+      ]
+    },
+    {
+      "into": "Slice (Fintech)",
+      "from": [
+        "Slice"
+      ]
+    },
+    {
+      "into": "Jp Sony",
+      "name": "Sony",
+      "from": [
+        "Sony",
+        "Ap Sony"
+      ]
+    },
+    {
+      "into": "Snapchat",
+      "name": "Snap Inc.",
+      "from": [
+        "Snap"
+      ]
+    },
+    {
+      "into": "State Street Corporation",
+      "name": "State Street",
+      "from": [
+        "State Street"
+      ]
+    },
+    {
+      "into": "Sibm",
+      "name": "Symbiosis Institute of Business Management (SIBM)",
+      "from": [
+        "Sibmpune",
+        "Associates Sibmpune"
+      ]
+    },
+    {
+      "into": "Swiggy",
+      "from": [
+        "External Swiggy"
+      ]
+    },
+    {
+      "into": "Tataelxsi",
+      "name": "Tata Elxsi",
+      "from": [
+        "Tata Elxsi"
+      ]
+    },
+    {
+      "into": "TCS (Tata Consultancy Services)",
+      "from": [
+        "TCS",
+        "Tata Consultancy Services"
+      ]
+    },
+    {
+      "into": "Techmahindra",
+      "name": "Tech Mahindra",
+      "from": [
+        "Tech Mahindra"
+      ]
+    },
+    {
+      "into": "Tek",
+      "name": "Tektronix",
+      "from": [
+        "Exgate Tek",
+        "Tektronix"
+      ]
+    },
+    {
+      "into": "Team Telstra",
+      "name": "Telstra",
+      "from": [
+        "Telstra"
+      ]
+    },
+    {
+      "into": "Tesco",
+      "from": [
+        "In Tesco",
+        "Uk Tesco"
+      ]
+    },
+    {
+      "into": "Thalesgroup",
+      "name": "Thales",
+      "from": [
+        "External Thalesgroup"
+      ]
+    },
+    {
+      "into": "Thomson Reuters",
+      "from": [
+        "Mail Thomson"
+      ]
+    },
+    {
+      "into": "Twitter",
+      "name": "X (Twitter)",
+      "from": [
+        "X"
+      ]
+    },
+    {
+      "into": "Uber",
+      "from": [
+        "Ext Uber"
+      ]
+    },
+    {
+      "into": "Urban Company",
+      "from": [
+        "Urbanclap"
+      ]
+    },
+    {
+      "into": "UST",
+      "from": [
+        "UST Global",
+        "UST (e3)"
+      ]
+    },
+    {
+      "into": "US Tech Solutions",
+      "from": [
+        "Ustechsolutions"
+      ]
+    },
+    {
+      "into": "Vit",
+      "name": "VIT (Vellore Institute of Technology)",
+      "from": [
+        "Vitstudent"
+      ]
+    },
+    {
+      "into": "Walmart",
+      "from": [
+        "Walmartlabs",
+        "Walmart Global Tech"
+      ]
+    },
+    {
+      "into": "Wells Fargo",
+      "from": [
+        "Wellfargo"
+      ]
+    },
+    {
+      "into": "Worldquant",
+      "name": "WorldQuant",
+      "from": [
+        "WorldQuant LLC"
+      ]
+    },
+    {
+      "into": "Xylem",
+      "from": [
+        "Xyleminc"
+      ]
+    },
+    {
+      "into": "Yahoo Inc",
+      "name": "Yahoo",
+      "from": [
+        "Yahooinc"
+      ]
+    },
+    {
+      "into": "Yellow",
+      "name": "Yellow.ai",
+      "from": [
+        "Yellowmessenger"
+      ]
+    },
+    {
+      "into": "Yourfriendlyhr",
+      "name": "YourFriendlyHR",
+      "from": [
+        "Yourfriendlyhr Pyjamahr"
+      ]
+    },
+    {
+      "into": "Zepto",
+      "from": [
+        "Zeptoapp"
+      ]
+    },
+    {
+      "into": "Zeta (Fintech)",
+      "name": "Zeta",
+      "from": [
+        "Zeta"
+      ]
+    },
+    {
+      "into": "Zohocorp",
+      "name": "Zoho",
+      "from": [
+        "Zoho"
+      ]
+    },
+    {
+      "into": "Zoom Video Communications",
+      "name": "Zoom",
+      "from": [
+        "Zoom"
+      ]
+    },
+    {
+      "into": "Cloudera",
+      "from": [
+        "Hortonworks"
+      ],
+      "why": "Hortonworks merged into Cloudera in 2019"
+    },
+    {
+      "into": "Cerner",
+      "name": "Cerner (Oracle Health)",
+      "from": [
+        "Cerner/Oracle Health"
+      ]
+    },
+    {
+      "into": "Capgemini",
+      "from": [
+        "Capgemini India"
+      ]
+    },
+    {
+      "into": "Hewlett Packard Enterprise (HPE)",
+      "from": [
+        "Hewlett Packard Enterprise"
+      ]
+    },
+    {
+      "into": "Akamai Technologies",
+      "from": [
+        "Akamai"
+      ]
+    },
+    {
+      "into": "ACKO Insurance",
+      "from": [
+        "Acko"
+      ]
+    },
+    {
+      "into": "In Bosch",
+      "name": "Bosch",
+      "from": [
+        "Bosch"
+      ]
+    },
+    {
+      "into": "MakeMyTrip",
+      "from": [
+        "MakeMyTrip (Go-MMT)"
+      ],
+      "why": "go-mmt.com is MakeMyTrip's group domain"
+    },
+    {
+      "into": "Cm",
+      "name": "CM.com",
+      "from": [
+        "Cmcom Recruitee"
+      ],
+      "why": "cmcom.recruitee.com is CM.com's applicant-tracking mailbox"
+    },
+    {
+      "into": "Yahoo (Personal Email)",
+      "from": [
+        "Yahoo",
+        "Yahoomail",
+        "Rocketmail"
+      ]
+    },
+    {
+      "into": "Outlook (Personal Email)",
+      "from": [
+        "Outlook",
+        "Msn"
+      ]
+    },
+    {
+      "into": "iCloud (Personal Email)",
+      "from": [
+        "Mac"
+      ]
+    },
+    {
+      "into": "Googlemail",
+      "name": "Gmail (Personal Email)",
+      "from": [
+        "Gmaill"
+      ]
+    },
+    {
+      "into": "Rediffmail (Personal Email)",
+      "from": [
+        "Rediff"
+      ]
+    },
+    {
+      "into": "Mail",
+      "name": "Other (Personal Email)",
+      "from": [
+        "Proton",
+        "Protonmail",
+        "Email",
+        "India",
+        "In",
+        "Asia",
+        "Inbox",
+        "Writeme",
+        "Usa",
+        "Web De",
+        "Infoseek Jp",
+        "I Softbank Jp",
+        "Rana Simplelogin",
+        "Titan Email",
+        "Att",
+        "Comcast",
+        "Sbcglobal",
+        "Bellatlantic",
+        "Insightbb"
+      ]
+    }
+  ],
+  "renames": {
+    "CMS": "CMS Info Systems",
+    "IVP": "Institutional Venture Partners (IVP)",
+    "Ivpindia": "Indus Valley Partners",
+    "Iris": "IRIS Software Group",
+    "Deshawresearch": "D. E. Shaw Research",
+    "Smit Smu": "Sikkim Manipal Institute of Technology",
+    "Mm Smu": "Singapore Management University",
+    "Deltax La": "DeltaX",
+    "Ap Jll": "JLL",
+    "Us Hjheinz": "Kraft Heinz",
+    "In Tiaa": "TIAA",
+    "Hk Flowtraders": "Flow Traders",
+    "Research Iiit": "IIIT Hyderabad",
+    "Student Nitw": "NIT Warangal",
+    "Students Iitmandi": "IIT Mandi",
+    "Smail Iitm": "IIT Madras",
+    "Mfs Iitr": "IIT Roorkee",
+    "Email Iimcal": "IIM Calcutta",
+    "Iimahd Ernet": "IIM Ahmedabad",
+    "Astra Xlri": "XLRI Jamshedpur",
+    "Cse Nits": "NIT Silchar",
+    "It Jgec": "Jalpaiguri Government Engineering College",
+    "Stu Aud": "Ambedkar University Delhi",
+    "Student Fairfield Edu": "Fairfield University",
+    "Gwmail Gwu Edu": "George Washington University",
+    "U Northwestern Edu": "Northwestern University",
+    "Inst Augie Edu": "Augustana University",
+    "Cornell Edu": "Cornell University",
+    "Yale Edu": "Yale University",
+    "Berkeley Edu": "UC Berkeley",
+    "Columbia Edu": "Columbia University",
+    "Ufl Edu": "University of Florida",
+    "Cmich Edu": "Central Michigan University",
+    "Lasell Edu": "Lasell University",
+    "Iilm Edu": "IILM University",
+    "Somaiya Edu": "Somaiya Vidyavihar University",
+    "Kiet Edu": "KIET Group of Institutions",
+    "Vit Edu": "Vishwakarma Institute of Technology, Pune",
+    "Ucdconnect Ie": "University College Dublin",
+    "Ap Linedata": "Linedata",
+    "Del Aithent": "Aithent",
+    "Ps Rolls Royce": "Rolls-Royce",
+    "Linktr Ee": "Linktree",
+    "Bit Ly": "Bitly",
+    "Scapia Cards": "Scapia",
+    "Jupiter Money": "Jupiter",
+    "Locus Sh": "Locus",
+    "Emergent Sh": "Emergent",
+    "Undostres Com Mx": "UnDosTres",
+    "Nownow Ng": "NowNow",
+    "Weekday Team": "Weekday",
+    "Arisinfra One": "Arisinfra",
+    "Nurture Farm": "Nurture.farm",
+    "In Experis": "Experis",
+    "Elastic Run": "ElasticRun"
+  },
+  "distinct_companies": [
+    [
+      "Tech Mahindra",
+      "Mahindra",
+      "Tech Mahindra (techmahindra.com) and the Mahindra Group (mahindra.com) are separate employers"
+    ],
+    [
+      "Olx",
+      "OLX India",
+      "OLX India (olx.in) was sold to CarTrade in 2023; OLX Group (olx.com) is a separate employer"
+    ],
+    [
+      "IRIS Software Group",
+      "IRIS Software",
+      "IRIS Software Group (UK, iris.co.uk) and IRIS Software (irissoftware.com) are unrelated"
+    ],
+    [
+      "Yahoo (Personal Email)",
+      "Yahoo",
+      "personal Yahoo mailboxes vs Yahoo the employer"
+    ]
+  ],
+  "unresolved": {
+    "com.de": "7 contacts at com.de, a domain no employer uses; the real company is unknown (left as filed)",
+    "go.com": "Disney's legacy domain, but both addresses look fabricated (jacob.conwayx3@); left as filed",
+    "anko.ge": "4 contacts; not Anko's (Kmart Group) anko.com, owner unconfirmed; left as filed",
+    "infoedge.it": "3 contacts; not Info Edge India's infoedge.com/.in, owner unconfirmed; left as filed",
+    "app.link": "Branch.io's deep-link domain, not a mailbox domain; left as filed",
+    "oyo.studio": "Possibly OYO (oyorooms.com), unconfirmed; left as a separate company",
+    "postman-ks.com": "Not Postman (postman.com); owner unconfirmed; left as filed",
+    "ionitd.com": "Not ION Group's iongroup.com / iontrading.com; owner unconfirmed; left as filed"
+  },
+  "_ids": {
+    "_about": "companies.id of every name above, pinned from the 2026-09-24 snapshot. Rules resolve through these ids, so a later rename (\"Yahoo Inc\" -> \"Yahoo\") can't redirect a rule meant for another row (the old \"Yahoo\" pseudo-company). New rules may omit their ids.",
+    "ABB Group": "f93c677e-dfac-4f56-8c15-9646b2c59016",
+    "ABB India": "8abc1055-f829-4e67-98a3-6e4706ac6629",
+    "ACKO Insurance": "3cafa614-33ce-4af9-886f-b605da7d7086",
+    "ANSYS": "1d5d55ac-8465-4bfc-b57e-a3d9aef4c598",
+    "Acko": "9771508c-82e9-49a6-94a3-b065dbea2612",
+    "Airbnb": "aec3fbea-c795-4f42-a6e1-e91c93e1cf07",
+    "Airtel": "5152d290-4aa1-4baf-bb18-0ec010105c8f",
+    "Akamai": "85436255-bd98-4ff0-9d2c-f1b3554ac9e7",
+    "Akamai Technologies": "ee019ed4-0507-4327-9cfd-35e1f86a0dc0",
+    "Alpha Grep": "45994923-d145-4559-8efe-42dca7770ec5",
+    "AlphaGrep": "13737ed3-6b14-47ff-8282-cba466148bc5",
+    "Alumni Bits Pilani": "30887db1-0bda-4b36-bd29-61374678e3a8",
+    "Amazon": "277ecb72-9b75-4537-946c-8b2ad9a106e9",
+    "Amazon Lu": "fefd28c2-e7d2-4c7c-bd21-e715b9a4f938",
+    "American Express": "59f9b496-6cd7-4c91-be58-3887bd0b86fa",
+    "Americanexpress": "55931e2c-3b00-484b-a1d6-fbbc839e3dba",
+    "Angel One": "f80f3533-c63e-4840-a6a1-fad71f3e1540",
+    "Angel One (Angel Broking)": "47b81b11-e3bd-4c74-b59e-12fda31bce85",
+    "Angelbroking": "20dac28f-e1d3-4622-a511-70dc13e22a12",
+    "Angelone": "c39a8e60-ed61-4378-b814-4a9c6a839f4c",
+    "Ansysindia": "7c6a9000-3627-45e4-8311-60dae2b958ad",
+    "Ant Amazon": "0fd701ae-f616-4038-9c80-aca3a66063e2",
+    "Ap Jll": "2f13cc06-57ac-48e8-aaf4-d98535577982",
+    "Ap Linedata": "4f34bac3-bdd5-40d2-8562-4a7307805149",
+    "Ap Sony": "34ed9285-5a97-4f32-99fc-9cf5e09a0b83",
+    "Arisinfra One": "bda7d256-3579-4789-a075-86776730568c",
+    "Arista": "af1e0b76-6680-41b9-bc01-ee38698068cc",
+    "Arista Networks": "86cbd222-fe54-4cba-bdd0-10b7d69dd7a5",
+    "Aristanetworks": "4f6f5990-8459-4d96-8411-36e2032c5cc4",
+    "Asia": "bf43feb1-fe85-46c5-bbf2-38ff3871edb8",
+    "Associates Sibmpune": "5371d703-63d7-42e5-b5e8-a3d6136e0afe",
+    "Astra Xlri": "8ce3a25c-47db-40b1-8560-d46c0a92c260",
+    "Att": "7f7e07d8-5e98-40c0-a34f-ffafe8533a02",
+    "Baml": "379fc600-71c4-495d-bb9e-38773898520f",
+    "Bank of America": "89c024c2-1cc4-4a1d-a0fd-fb3e637fc011",
+    "BankBazaar": "d6ac2595-bb40-4cfa-b788-77c53047de63",
+    "Bankbazaar Sg": "cc4eec02-d196-42bc-a1a5-97a4612dac2e",
+    "Bellatlantic": "644ebd2b-0723-4669-9c38-cb85374c4fb5",
+    "Berkeley Edu": "e81bf092-ddd1-404d-97bd-c830d8392232",
+    "Bharti Airtel": "f7963256-1df2-4535-b9b6-cec97811c82a",
+    "Bit Ly": "fcf1b46d-4a35-4a6a-818e-3a2318afda37",
+    "Blinkit (Zomato)": "8f9a425b-008f-4ae5-bfbe-8deab9d8374c",
+    "Bosch": "58902085-29af-422e-a234-eb483f6221b1",
+    "Bs Nttdata": "ae08e344-bc1b-4d2b-ac29-627b2837b38c",
+    "CMS": "1ad241b3-3d3d-4a7a-879d-424d052144e6",
+    "CSG Systems": "8bd553b8-3ec0-48df-bcd3-1e7e39504f87",
+    "Capgemini": "0846d50f-500a-45d9-b561-2c525f5bbb7f",
+    "Capgemini India": "7e99552d-ab4a-4b4e-8237-e845d9e884da",
+    "Careers Airtel": "e9e51dc0-c0e2-4ae6-8fea-0415b4240208",
+    "Cerner": "c511547a-0bbf-4f8e-bbae-3806d2b532ac",
+    "Cerner/Oracle Health": "79506bc7-d7f2-4f87-bec5-4ea07e5180e6",
+    "Ch Abb": "a1b74f94-ba7c-44ff-a8ad-49000b185259",
+    "Chase": "98f84f7d-d3fa-40a5-8519-70c3699cf2e6",
+    "Citi Com Mx": "526afabf-6079-411d-be98-a984176ff5de",
+    "Citigroup": "82262e0d-739e-4070-b8c3-61c3406392b9",
+    "Citigroup (Citi)": "df566521-b957-45f6-802f-c9d62472e4a4",
+    "Cloudera": "e52147cf-b3d7-4205-8dec-f23be1215d5b",
+    "Cm": "0364ea8c-18b0-4de1-a4fd-f89f9bc25e95",
+    "Cmcom Recruitee": "c831ec9b-7234-46f1-b071-b3252d9db5ca",
+    "Cmich Edu": "c2c6604f-2c06-4a87-9c08-33bafb19eb99",
+    "Coforge": "4b23dd58-8d80-48fd-a737-ff516a3d6ec1",
+    "Coforgetech": "91c2e3c2-71ad-4f6a-9ac4-9d6528c60c4f",
+    "Columbia Edu": "9d3ebc4f-f836-4d32-b7a4-260f5e3388b4",
+    "Comcast": "ef539542-891a-4bf5-8559-a715d5604bf1",
+    "Consultant Kkr": "8c9f1194-936f-4576-9399-3762ee0bf8e3",
+    "Cornell Edu": "2fd8b14c-cacd-4438-baab-5e26db7c69d5",
+    "Cse Nits": "d67b8e2f-bf97-4296-989b-7c4a0839b3cf",
+    "Csgi": "2a8186b4-cf65-4621-83e3-ab45675fe3ef",
+    "Cult.fit": "675763e5-e091-4e8e-a3b2-7d8d15800473",
+    "Cultfit": "e883ee9b-9f58-424f-a835-e7fabee89109",
+    "Cure Fit": "9d04c01b-9e06-4036-ab3d-3e0a4e19fa1d",
+    "Curefit": "7dbe0868-5121-4009-a1cd-75d6a75235ec",
+    "D. E. Shaw": "68edeb26-5893-4790-8fdc-25ee1dbba764",
+    "D. E. Shaw India": "81cbd871-c5ec-4861-b1a6-5010e7fbec1c",
+    "Del Aithent": "96750d16-e3ac-443d-adda-46ad7507ac72",
+    "Dell Technologies": "cc4882a3-afa2-4e36-9e90-248c35ccf607",
+    "Dellteam": "e4a99cf4-5800-4050-a7a6-146141eaeaff",
+    "Deloitte": "f9a97f72-529c-4538-b9bb-afcc42f16cff",
+    "Deloitte Ca": "5f7344e8-7b2d-4504-a9be-a44dff113fa5",
+    "Deltax La": "febfd3fa-c643-4fce-a56e-a063aeb0b505",
+    "Deshawresearch": "6c4daab1-a1de-4bb6-b1cc-9b2f7f2fe3aa",
+    "Domain": "95a566ea-3862-4ff9-a48f-6a9e7131c160",
+    "E Linkedin": "f039848f-62dd-4e66-9e9a-16d4af6ed08a",
+    "EPAM Systems": "1eed096f-61ee-41fb-b6ef-27a2f4d7187e",
+    "EY": "92b4bdce-29c8-4494-8de9-f76954bb27f9",
+    "EY India": "6546cd8e-318d-4539-8f95-eed64e764295",
+    "Ea": "6c45a84c-f5d6-466f-a95d-9831b86dc671",
+    "Edelcap": "f38b0c0d-a5de-43e0-a803-0ed4b52a819a",
+    "Edelweiss": "9d1fad36-3a1e-4678-9273-4483ccc04e0e",
+    "Edelweissfin": "22299a22-b15f-4b01-8a09-7644f61223ab",
+    "Eightfold": "1d932b93-0222-48c9-a228-3e1c757e299a",
+    "Eightfold AI": "43ab38c8-69e3-491b-aad6-164b757c61d8",
+    "Elastic Run": "b711dd9d-ad26-4918-8655-22b496747ba0",
+    "Electronic Arts": "8e0deda9-e587-4b37-a50f-83dd271e50dd",
+    "Email": "70801095-f2f2-4b60-80d1-aaec8958c635",
+    "Email Iimcal": "8f154664-2880-4c60-a473-80922a5df492",
+    "Emergent Sh": "5321622b-6b4a-4c36-82bc-9e47993c4852",
+    "Enphase": "eb5d443d-6e35-46b5-906b-9828570b5152",
+    "Enphaseenergy": "5c533232-ce50-4f4d-9093-b46ab1d873b0",
+    "Epam": "a0aa733f-a39c-4ec6-a7b5-73343d254e18",
+    "Epic Games": "64118162-b9d4-4c61-a429-a51b45409dd8",
+    "Epicgames": "e1bd9b80-405f-472f-b797-8fd8effae7e6",
+    "Ernst & Young (EY)": "edb5ec03-2b59-4d5c-9e2b-a7be76fe17f5",
+    "Eu Panasonic": "e9f98567-38b8-4f6d-b21c-467504456cfb",
+    "Example": "df8447bb-7ac5-43ac-aae1-3e88b0f46729",
+    "Exchange Microsoft": "4188f75e-4763-49c4-9739-f4970f50d7ff",
+    "Exchange Slb": "93380306-344d-452e-8c46-df37dc51dd8c",
+    "Exgate Tek": "9de4b25c-632c-4e19-8f79-4b23d7fd1664",
+    "Expedia": "42eefaae-06f1-4101-a44b-c64ddc5c6e9d",
+    "Expedia Group": "715c9935-db79-4946-8c2a-681d4294c70c",
+    "Ext Airbnb": "839457bd-a80f-4e8c-b4b0-78728eb90bdd",
+    "Ext Icicibank": "77eef6f6-122d-46f0-81a1-b15e88aaae6d",
+    "Ext Uber": "87b1e0c9-14be-4f6c-8a23-f5245aefd73f",
+    "Ext Us Panasonic": "47c1d249-0f9e-4f04-997a-e72623b3d72a",
+    "External Mckinsey": "0f3b517e-b15a-4cd0-97a4-df35d00ae992",
+    "External Swiggy": "47dafb69-c87b-40a9-92ed-54ff2b1413eb",
+    "External Thalesgroup": "5f19b148-b912-40be-b3d4-5638c13b852a",
+    "Facebook": "b8343d79-fe9c-4c4f-b27b-5a7a6c52d7ee",
+    "Fi Money": "5f589f8a-8a40-4cf3-92c4-7e9f9b4a2e5c",
+    "Fi Money (Epifi)": "718248c4-6b6b-4de9-af5f-d18f5765783d",
+    "Fidelity": "6be56b9b-12b3-4128-a429-20695adc405d",
+    "Fidelity (FMR)": "2d299e47-67af-45de-9ba6-bb1faccfdcbb",
+    "Fidelity Investments": "4f93d254-9330-4bad-bb10-34538212b051",
+    "Flipkart": "d8e64a09-3159-46a9-bb56-05ef0400e72b",
+    "Fractal Analytics": "5f9d191f-893f-41aa-97c9-d50efb471b9e",
+    "Fractalanalytics": "259e5164-ffe3-4752-adea-455d39514cfb",
+    "Fynd": "1f810604-03ea-4951-bcb2-66eff568a05a",
+    "GE HealthCare": "0f2086aa-19d8-4d51-9bb1-60b55b7723fa",
+    "GamesKraft": "5768d829-cb41-4fe3-b553-fdfdc850cad0",
+    "Gds Ey": "df8d2b29-94a0-4e1d-a6a6-ea366e2fcb5b",
+    "Gehealthcare": "8bdb3912-8498-464b-b840-99d33ea45e0d",
+    "Getpostman": "7dcaa69f-f517-4dd1-876c-44563a6a4f81",
+    "Gmaeskraft": "230b4668-deed-4b14-82a4-40d6567db585",
+    "Gmaill": "f06c9bb2-79b7-4bcc-aa3f-5ee1e49b9ae1",
+    "Go Jek": "4a1b8ad2-6427-46b0-b664-1d46c640a3ff",
+    "GoMotive (Motive)": "ef80742f-81be-484e-9b61-95d5ca36755f",
+    "Goa Bits Pilani": "e3f8919a-3a82-423c-9262-cd4045351411",
+    "Gofynd": "865c6d05-6502-4157-821f-84ba58b89128",
+    "Gojek": "64dede3e-eb1a-49af-baac-695d5383e0fa",
+    "Goldman Sachs": "efb867e4-e668-4c03-8382-e239c0cfa1a0",
+    "Goldmansachs": "d2de7cc8-0961-4805-898b-ddde87f7f0c3",
+    "Goo Gle": "b704bc11-cd80-4143-a00b-df02b239b564",
+    "Google": "25b3ad14-7f91-444d-9ccb-64a7c65e2c1b",
+    "Googlemail": "effc8777-c55f-4c4b-80a0-e92a84cb61f1",
+    "Grab": "aa559e97-d1e2-4662-927c-ead7d75d5cd6",
+    "Grab (GrabTaxi)": "05a3099c-5ffc-458c-b547-da204cf80a05",
+    "Graviton Research Capital LLP": "69724037-b3ef-4775-a7dc-d29d1c62ab02",
+    "Graviton Trading": "354ad56f-0a8a-4a49-8dd0-f40e428b49c2",
+    "Gravitonresearch": "593dc838-b3df-429e-af2c-1aff509b649c",
+    "Grofers": "b6944a7f-fd19-4c33-afd8-75906fc19e2b",
+    "Groups Mathworks": "f02ff11f-1840-46c5-87b4-db738577dac3",
+    "Gwmail Gwu Edu": "66bb5b16-79d0-419e-9738-a1fba42dce6c",
+    "HCLTech": "1e6a6db9-8957-44af-8e40-86d1c612b115",
+    "HSBC": "eb872435-8bfe-4b0b-8e66-e1d97c99e7ce",
+    "HSBC India": "941965e2-eac9-44e4-b4d7-c5014cec809e",
+    "Hbc": "0c6aeb5d-7ed7-4344-bdca-1d0c465af583",
+    "Hcl": "8c21f7c7-d643-46a0-b63c-8cecb6e6e1fa",
+    "Heizen": "ce765432-72ff-4a4b-b4e4-fbaef64acc7f",
+    "Heizen Work": "b887b1d8-0f29-45e3-a226-e3849de9b63c",
+    "Hevo Data": "564fadf1-73e5-4a4f-8408-393fab2f573f",
+    "Hevodata": "652d34b7-c151-4d81-9e37-b786f7eff717",
+    "Hewlett Packard Enterprise": "5d4507af-e6eb-43e7-8084-3cc257ed3588",
+    "Hewlett Packard Enterprise (HPE)": "3ad8a432-f994-42de-8fc3-0c37236ee85b",
+    "Hgf Fdfg": "3c85bdbb-fd0e-4577-97b5-69b8ebe7e456",
+    "Hk Flowtraders": "1a86d04a-6388-4304-8727-f9f163ec6a5b",
+    "Hortonworks": "6fbe713a-d525-445c-82e0-2beaed6dd72b",
+    "Hyderabad Bits Pilani": "2d88ec64-4ac4-49d2-8d50-e509e3404582",
+    "I Softbank Jp": "e9019d0b-13f3-4727-99c4-c6ed767de93a",
+    "IBM": "b81c82f2-c846-462d-b28f-c007ff246829",
+    "IBM India": "70fc0df6-b06d-42dc-b777-b2c6eb54122e",
+    "ICICI Bank": "f86b09fe-d397-4438-acc3-ea60b7127219",
+    "IDFC First Bank": "292904cc-31f6-499a-81dd-12cd997ad518",
+    "IDFC Limited": "0a15f32f-c18d-4c4a-a1b7-ca9f6c0cfcbd",
+    "ION Group": "df33c805-2a18-4e28-8b32-ed8420466df9",
+    "IVP": "d7eaf151-60fa-49bd-851e-9677e2db3e7a",
+    "Idfcbank": "64ece6ec-3f74-4b7e-983e-7ec41204ebab",
+    "Iilm Edu": "0fefb9eb-f6b9-4122-bcf5-15fbc1942fae",
+    "Iimahd Ernet": "80d6b826-fd50-4eb8-a07e-bd2ea39857fa",
+    "Iitbhu": "081a8ea3-555c-4ca0-8f3a-dabb8a1d4897",
+    "In": "dc214bc6-7cf7-4e3f-9a94-21a711bcfbcf",
+    "In Bosch": "856fa575-75af-4ae2-bfb7-4adff4092594",
+    "In Experis": "00639181-fcb4-4e60-83e6-2713ec3402ac",
+    "In Nestle": "51ed94d4-96e5-48ad-a5a9-05516747dc6e",
+    "In Panasonic": "12f20306-d32c-4888-84d4-12dfac65e929",
+    "In Pega": "3aca7dce-dc25-4fe1-9bf7-1ddd9aeafd30",
+    "In Qatarairways": "13f674d0-ccf0-4b2e-b61e-813de437d00b",
+    "In Tesco": "002393e5-87b1-4681-915d-581b3bfa026c",
+    "In Tiaa": "19bc525c-897b-448e-810a-47e56fd09b23",
+    "Inbox": "0624f4e2-a046-4cc2-a768-7b7d780bcef0",
+    "India": "4eb6737f-2087-4206-988e-111452b7fe3a",
+    "Infoseek Jp": "90c427f2-8790-46dc-afbc-cea333ee529e",
+    "Insightbb": "f0f513e8-11e9-4031-be5c-81e0504d37ba",
+    "Inst Augie Edu": "d69dee08-06ef-4095-bd3d-fa1ec642491a",
+    "Iontrading": "a9bf4614-e186-4d83-bc90-5b2ef73a16e9",
+    "Irage": "4cc3920b-dc11-4346-9767-6e78bb720250",
+    "Iragecapital": "cf75f38a-bfda-4ace-8270-356178f1d732",
+    "Iris": "2f6690f9-c2d0-4c5c-96dd-a9ce1775a486",
+    "It Jgec": "b2d2c610-925b-4c3e-9b6b-1e394b277f6b",
+    "Itbhu": "b9629a71-2d77-435f-94d1-b418e0b5292f",
+    "Ivpindia": "02ca0642-5b30-43b0-b873-b8b94d0f9fe4",
+    "JPMorgan": "e90e021f-b5f3-42ae-8ebe-8cb968d6acc2",
+    "JPMorgan Chase": "c7fc0beb-27aa-48c2-b4e9-695a61a290f6",
+    "Jobs Netflix": "eda32d02-f974-4e7b-bdf0-d2191f890a11",
+    "Jp Panasonic": "ea7a4c9f-9deb-4a99-9438-f175b8975061",
+    "Jp Sony": "3f5a5cbf-f4a5-471d-8265-c784d53b6fe0",
+    "Jpmorganchase": "5a4cb9e0-4163-4afe-8fa5-1d960748c123",
+    "Jupiter Money": "b4e5219d-a412-4e1d-8fef-3e9fa88ae304",
+    "Keeptruckin": "bbfb3915-11d2-40c8-a4d7-0d993b90e3fd",
+    "Kiet Edu": "1ebaa302-fe1d-496d-ba86-2f8c643c3a1b",
+    "Kkr": "5544e302-992c-4102-9005-b360bd8fbfab",
+    "Kla": "4492ea35-039d-4160-a209-3a6cd4594560",
+    "Kla Tencor": "caf66969-4009-4b7a-a58d-95cb2618561e",
+    "Kotak": "7572b452-7f40-477b-a884-b7d669dfe11c",
+    "Kotak Mahindra Group": "d91e8581-bb9c-4b5a-b17e-f6d43aa52e89",
+    "Kronos (UKG)": "aae5271b-f71a-459d-a877-bce61b783c2c",
+    "LTI (L&T Infotech)": "59e830cb-0185-4e14-8df2-711daed9aa56",
+    "LTIMindtree": "f68a88c9-e6b4-4ca0-9db6-69fe762e79fe",
+    "Lasell Edu": "86fb2d5a-35e7-4f88-ba1b-b30ed8c4ba61",
+    "LinkedIn": "9586789e-3ff0-4fb7-9db5-7db90415f5ef",
+    "Linktr Ee": "c1debfdb-0d92-48c8-a14e-ccb1b3370a95",
+    "Locus Sh": "3c800bd7-8e83-4567-ac89-50a75bca4dbf",
+    "Lowe's": "4a6499b1-4be9-4472-a824-7440f3e65788",
+    "Lowes": "5ae3c887-3eff-4a6a-99e9-1cf3dc83f5fe",
+    "MN Corp": "bca7c031-058e-4c37-a834-f4cfa5505b01",
+    "Mac": "7dbfd3e8-e0e6-49f3-b76c-eea9ec0a98c8",
+    "Mail": "0929692b-3be7-4ba0-9931-a109900fe5de",
+    "Mail Rakuten": "307c2afd-a379-4255-81ab-30b84f4a3ce7",
+    "Mail Thomson": "5fe299c8-9720-4e78-a52d-7e2f13a1a6e3",
+    "MakeMyTrip": "36df6b7a-a075-4ba1-ab56-26362cd5e171",
+    "MakeMyTrip (Go-MMT)": "8663f2ed-eaaa-4db8-84be-03b314b96c8d",
+    "MathWorks": "8cabeb03-6d5e-49b6-a34f-8b994bf6108d",
+    "Mathworks Fr": "9872a1ba-a4fd-4351-b645-80bb849d5893",
+    "Mba Christuniversity": "ddc3da3e-01c3-45b9-9810-2c2c12d41d41",
+    "McKinsey & Company": "42f8f93d-12ac-4d3a-a91e-b817a32a0bee",
+    "Med Ge": "a6d5d454-cc76-475f-b4d4-2c3bd6fb7a28",
+    "Mercedes Benz": "df6dd648-656e-4574-bd1e-5a0fb115b9e1",
+    "Mercedes-Benz": "4ab71b76-91df-4f4a-89fa-584fbfe4cc14",
+    "Meta": "8b4a7b55-1c04-4ae2-b63c-edb276892205",
+    "Meta (Facebook)": "93b61521-4747-4a95-9963-dd52d162c717",
+    "Mfs Iitr": "f6d1a660-3872-4807-84ba-17820d242554",
+    "Michaelpage": "e8f1d487-6692-4564-9298-c988a01ba838",
+    "Michaelpage Com Mx": "570434a9-06f5-40f2-8f42-c1f3e5ad6a35",
+    "Micron": "f3c6255e-34f6-4ce7-9934-a08ed51bf027",
+    "Micron Con": "ae1aa452-4d57-4c4a-8315-5c01c68d11ee",
+    "Microsoft": "07683271-4887-4618-93f9-6b19fda3194e",
+    "Mindtree": "b97ad2f8-a103-4cd7-864e-85c9c6b199f2",
+    "Mm Smu": "a83d31db-d2f8-4e7c-a4e6-d2c42263cdfd",
+    "Msn": "b9b8963f-fded-4e76-8e88-d70313b2e3c9",
+    "Msw Christuniversity": "5609002b-21db-4bdf-b09d-173ea712f8d5",
+    "NK Securities": "f0b1d190-e416-4aa3-831f-7dcd596f57c4",
+    "NTT DATA": "c1b853e8-faea-4c16-b1f8-bd3c2793723d",
+    "Natwest": "9095ce2d-92d5-4f98-b0d9-f5dd78e246cd",
+    "Navi": "552a67fc-b2d4-4b84-8a88-6d57f2966640",
+    "Navi Technologies": "a5321b14-c26e-49f1-8b57-a8bba4d9fb01",
+    "Nestle USA": "a96b41ec-230d-4879-b2ef-68daf6d25925",
+    "Netflix": "9ca27627-2e3b-41e4-ba63-1dc66182e5b3",
+    "New Relic": "f06d0582-228c-4d99-94f5-45442677025e",
+    "Newrelic": "86143548-714d-44e9-bc24-9afece8fbca4",
+    "Nksecurities": "2c2b8a2b-ab31-4050-9caa-0b228c59f9e3",
+    "Nownow Ng": "040eb6e7-032d-4828-8f2e-48b9af6f5af0",
+    "Nurture Farm": "c19edde6-e716-4ddf-9ecd-48f3e786c37f",
+    "Ny Email Gs": "67aa05e0-2bf9-496b-9dbd-272f22f8806c",
+    "Ola": "fd3414df-8694-479e-b374-40e8da2978ea",
+    "Ola Cabs": "ae81d5b4-a5b2-45b9-9cc5-f72ccfd48114",
+    "Outlook": "ed93f40b-02ee-4d5a-8b73-25c273051abd",
+    "Outlook (Personal Email)": "a3cea053-3b83-4e91-b3d5-951ef2348018",
+    "Palo Alto Networks": "13b96433-0c17-46a0-ab77-4af3b5383473",
+    "Paloaltonetworks": "0e9a1eda-6515-4dbc-a436-036e443a9213",
+    "Panasonic": "d489a300-8f0e-4707-b641-09cf8e56f3ed",
+    "Partner Flipkart": "68a06df0-e88b-45cd-95fb-71bfe273778d",
+    "Partner Samsung": "b852178a-d157-4269-a7d8-f6d40b50a8c4",
+    "Partners Hbc Ca": "715276e6-f3fb-4b83-be4b-706fc929ccf0",
+    "Pegasystems (Pega)": "29e387c2-8455-4683-a9c6-7976c6e81993",
+    "Pilani Bits Pilani": "1aafc66b-7c24-46d3-9448-6c63c7dc2434",
+    "Porter": "cbf0280f-e769-4358-9c62-2bf280c265d2",
+    "Postman": "c9a32c8f-98aa-40cb-8fea-8f5ec3c91a58",
+    "Proton": "b12a1082-d742-4278-b601-691c9d8de9da",
+    "Protonmail": "c3c77344-7417-4378-9bc6-52ed12d5a090",
+    "Ps Rolls Royce": "9a9f15ce-76b6-4847-b059-1c4eee822c2b",
+    "Publicis Sapient": "e7fd34e8-67ba-4bba-b0d1-7bd402e29559",
+    "PwC": "42fcd93f-48ab-4500-8406-43ab1833b320",
+    "PwC India": "07feb5a5-14c3-4d55-9ac7-a2a0959619f5",
+    "QI Capital": "22c094e6-4dc2-462e-af4c-da125a1c6f8a",
+    "QI-Cap Securities": "ef12f9ff-2c88-4bbb-9648-9d9646079a3b",
+    "Qatarairways Com Qa": "7fbe0bd6-90d4-4c3d-b7f3-d3c031db11a8",
+    "Qnance": "4b87fb11-5549-4239-94b3-32407a841913",
+    "Qnance Research": "d0297435-b1ef-446c-9be0-d1fba2714b6f",
+    "Qualcomm": "9cd98770-02ad-4e7e-8435-4afbd5dcacd6",
+    "Qualcomm India": "fc8ed433-4fdf-4509-a0b6-2ecf409c4c59",
+    "Qualitest": "f7176979-69d3-4603-b808-d2b84d2c5e21",
+    "Qualitestgroup": "91dac962-7efc-42e3-b797-91cf66ee8d00",
+    "Quantbox Research": "bb80a2c4-dd7d-4a41-9813-90def47b5e50",
+    "Quantboxtrading": "99aec937-c410-46fc-b58d-9f4042005435",
+    "Rakuten": "889c743a-3f04-4b14-ae76-b41a595c9646",
+    "Rana Simplelogin": "8357b09c-57f3-4b60-a37d-f3e792f6e0d0",
+    "Rbs": "668aa632-3546-426b-9c82-172ca0dc3692",
+    "Rediff": "4cc6ed2d-4b3c-4efb-b5ff-698e07255e49",
+    "Rediffmail (Personal Email)": "20405897-4281-44cd-a996-c729bae392ba",
+    "Research Iiit": "268ce0ef-1e29-42ec-96ef-4d4124683b70",
+    "Rnf": "13c5fcbd-c5fa-428b-88be-27a1df025b12",
+    "Rnftechnologies": "62db9313-7f0f-4089-839f-f778f07e9cd0",
+    "Rocketmail": "d9debc48-501c-4648-ad25-c269059e1cc0",
+    "Royal Bank of Scotland (NatWest)": "b08334b2-290b-4da3-a9c7-ccffe25223fe",
+    "SAP": "bbcca7e7-a9b3-42be-a708-3dc4909c15a3",
+    "SAP SE": "0d46507d-c4c8-4bc5-b82d-94c943408a6f",
+    "Salesforce": "ab802b11-e093-47d6-8262-67f6f15a80fa",
+    "Salesfroce": "c476d79c-5a8b-4cba-a5f6-07a753f42727",
+    "Samsung": "86fbf0a9-7e89-4fb7-b4ae-ac1020bb3c96",
+    "Sapientag2": "f319fc0e-25c7-456a-b087-bdfa6c1313f4",
+    "Sbcglobal": "abd0989a-5728-4cca-9b0e-6de01d339644",
+    "Scapia Cards": "1f5a65e0-8dda-4646-8f53-eca08f49cbec",
+    "Sdf Asdf": "168325e9-43a8-4239-becc-d4a488e22a14",
+    "Sdfgsdfg Asdfgasd": "d5a453b0-7679-4f19-9314-c74fdaa3c3f8",
+    "Sdfgsdfg Asdfgasdf": "6bb2dae2-9b71-4f49-a876-71877fe4c90d",
+    "Sdfgsdfg Asdfgasdfg": "5a3e6568-02ef-4042-96c7-05ad563a5d53",
+    "Service Now": "a5029b41-bd0d-4b96-a4f3-bac3f54005cc",
+    "ServiceNow": "4bafde75-62f6-4156-a438-7004ff84605c",
+    "Servicenow Ind": "6ff90b1b-432e-4e87-bd75-ab1f7b078ca6",
+    "Sfdf Sdf": "172f1357-ee25-4135-a269-45ba87672637",
+    "Sibm": "15aba244-c599-4a06-b902-c98a1424a71a",
+    "Sibmpune": "2a59aa0f-e30f-4121-9f67-bffb29fae97c",
+    "Slack": "5384c07b-8460-4544-8d35-fae9b108519a",
+    "Slack Corp": "c661a435-5a0c-47a7-be2e-f20544a66764",
+    "Slaesforce": "c8a9f3b2-75b3-4868-ab8a-e9a02ae145d7",
+    "Slb": "9ad93803-83b8-4897-bf95-aafa0878913e",
+    "Slice": "d338dae9-c380-43d3-ab58-2cbb46c023f4",
+    "Slice (Fintech)": "12b0601f-2027-429f-bdbb-1cd8515c6970",
+    "Smail Iitm": "59ac7230-35b6-4d9a-a4d8-f36c06ea5ba0",
+    "Smit Smu": "48c084af-e2f4-4299-82cd-b5618dca1160",
+    "Snap": "51b72d5f-dd09-4acf-8ea0-9b51e31981ac",
+    "Snapchat": "07f3fa6f-e724-469b-a2e0-6cae8a66c20d",
+    "Somaiya Edu": "1e13874e-d6ac-4426-8895-ce4e398a772c",
+    "Sony": "0f0d0fb8-b444-456e-bca9-6c7277f59df0",
+    "State Street": "b57fbbf6-02a1-43a3-91fa-69624194bff3",
+    "State Street Corporation": "8d76e4f4-68d4-49e4-89ff-a588a3e2b505",
+    "Stu Aud": "d6be06fb-90c1-432a-9c97-865e0fb87e84",
+    "Student Fairfield Edu": "4ef0046d-a444-4718-9aca-bb48933461b3",
+    "Student Nitw": "2a196e1a-f567-4b00-b11d-4428cd89141a",
+    "Students Iitmandi": "465561ea-d37c-495f-9994-6ee79b52d833",
+    "Swiggy": "a83c4300-e778-46cd-98ce-a0be41cda7b1",
+    "TCS": "3a6bb2d0-1723-474c-b8ee-0e175d004ff9",
+    "TCS (Tata Consultancy Services)": "218af603-9673-47c0-bb0f-f998c34a9556",
+    "Tata Consultancy Services": "515d45b6-b1ef-47ba-b69f-653d6e28fd85",
+    "Tata Elxsi": "9a7d6911-82ec-4ddd-b712-b036ba04b565",
+    "Tataelxsi": "a9b0c166-d9d4-40e3-b39b-0ccfc9ec8321",
+    "Team Telstra": "a4218e43-64d1-4e59-9e91-cca3d0ff87cc",
+    "Tech Mahindra": "ab285abe-7832-4e59-8e90-85353cc9aab2",
+    "Techmahindra": "0f88ce09-0419-4353-8642-6aacfb6bfc82",
+    "Tek": "7b1299e7-1d38-47f0-8d84-db43f752bfe3",
+    "Tektronix": "9caa8326-e11f-4aac-b376-4d359a7a175d",
+    "Telstra": "9964fa94-9bad-4a6e-8c83-73b4f87f6b64",
+    "Tesco": "92ce586c-5428-4024-8609-3e807a7e8321",
+    "Thalesgroup": "67daa9f0-10bd-4ad6-9a98-aa6a55bcfe3c",
+    "Theporter": "37d4b1ef-52c1-4617-8b29-46fe6a7cb6b2",
+    "Thomson Reuters": "d9bdac2b-e4ba-46e9-88d2-1ca977ad6020",
+    "Titan Email": "ef95108f-4506-443c-8af9-0474af3fd97b",
+    "Twitter": "1c4a8e74-7cd7-405c-85fd-58fb9df49a83",
+    "U Northwestern Edu": "bc1bbfba-b48a-40c4-9792-8c6f733b8bf9",
+    "UKG (Ultimate Kronos Group)": "e30acd71-6f10-41fb-b14b-ed28b9b03eb5",
+    "US Tech Solutions": "8a7f2747-8019-42ef-bb70-e7a0e0e5ea1a",
+    "UST": "27d7abf2-6cc0-4cc2-83c8-e105a9baf1ea",
+    "UST (e3)": "81d39bf1-02ed-4483-9df5-f0a51417e173",
+    "UST Global": "33053834-a039-4815-871d-5b23fafac360",
+    "Uber": "ba7bd38c-5d8c-4295-a0ab-e5c4cafc967f",
+    "Ucdconnect Ie": "e1594ca6-8b43-4806-8576-7b90678f79a5",
+    "Ufl Edu": "c09bd1fb-78f6-412a-9d82-f5d5a4895817",
+    "Uk Tesco": "691ba504-62f9-4c0e-b3bc-7d594d52d3ee",
+    "Undostres Com Mx": "5ab7956c-fc3d-4685-9b8f-b3f6ee4f6f76",
+    "Urban Company": "3219a934-7092-4189-bbff-97812aa759b6",
+    "Urbanclap": "a013de33-556a-42b9-b27e-1173b421a8fe",
+    "Us Hjheinz": "38818b98-881e-4dfe-9d72-30682bd46c1d",
+    "Us Panasonic": "94d818ee-cf31-49a5-b13b-4e75bafe34e9",
+    "Usa": "55859ba5-dbe3-4391-af28-1aecf21c287b",
+    "Ustechsolutions": "4c1310ed-4097-4a88-afba-af3132064e03",
+    "Vit": "ffcb5b85-64e5-42b1-8d14-fce2ada5cba1",
+    "Vit Edu": "babd904d-473c-4789-b59f-7cc71db93b6a",
+    "Vitstudent": "61a86360-45b2-4d80-8a35-cedf98a9bd26",
+    "Walmart": "436988bc-82d9-43fb-82f2-b050768ab13e",
+    "Walmart Global Tech": "588ccbbd-dec6-4fa3-9178-729be06a15a4",
+    "Walmartlabs": "f34472e1-a11c-49fd-9783-cb2fb71389ea",
+    "Web De": "2f24eb9d-a936-466d-92a4-39f0fc8c36dc",
+    "Weekday Team": "c0736960-1ad8-4000-908c-47b977a086d2",
+    "Wellfargo": "aba0504c-2034-43b7-ad39-8bf65e3c927b",
+    "Wells Fargo": "643efb46-705a-433e-81ab-558bb9fe4c01",
+    "WorldQuant LLC": "bf0e3353-e468-4993-a14f-3b22e439509b",
+    "Worldquant": "e9d850d6-4fcb-4174-ab54-7a89532b8cec",
+    "Writeme": "eafa2576-bc74-4090-b76c-a6a60a216e53",
+    "X": "ef983962-4502-47ba-9514-32cb2462e18c",
+    "Xylem": "503bbf85-f929-48a5-ac5e-6e4d9e9db5f7",
+    "Xyleminc": "e933bd92-f468-4faa-96ad-3da8ba69e6c2",
+    "Yahoo": "939deb5d-7552-4531-966c-4a16018990a1",
+    "Yahoo (Personal Email)": "27468952-1317-4c16-8aec-d3ec51585e9f",
+    "Yahoo Inc": "e6993e76-7242-4d0f-83a9-a693bffce8c6",
+    "Yahooinc": "ec6fcdba-c327-4707-98df-5a21bd71261c",
+    "Yahoomail": "cb7aec21-d840-4c13-89e1-b2933f86335d",
+    "Yale Edu": "d6a9376f-441a-4136-917b-1d4812de8153",
+    "Yellow": "53a34878-5194-4f8c-a262-951368a71a19",
+    "Yellowmessenger": "97e8d90e-18f2-488d-a254-04b023466817",
+    "Yourfriendlyhr": "5597b8b4-847d-46ec-b912-284e406d226f",
+    "Yourfriendlyhr Pyjamahr": "69cb42ab-25c3-4c5a-9cf9-6f5b891a8ebd",
+    "Zepto": "bdc1576c-b091-4b8e-a9c8-91fff6aa7dfb",
+    "Zeptoapp": "7efae99c-ff6c-421a-9184-a2b6ac22e1f8",
+    "Zeta": "b0d85834-e01b-4467-9410-3f33d06bb078",
+    "Zeta (Fintech)": "42b65dde-c4fb-40c9-89b8-fd9259138156",
+    "Zoho": "c4483af0-b601-4400-b170-51a7e197e3ab",
+    "Zohocorp": "101d7c3b-5b5b-4a5b-9979-69f875545d04",
+    "Zomato": "1df238ec-cded-44e4-a808-b98b82c856ac",
+    "Zoom": "527e44fb-ae6a-4cdc-aaaf-a544ed147c4e",
+    "Zoom Video Communications": "5bfc0934-fe1e-43c7-a979-39048da93dc0",
+    "iCloud (Personal Email)": "9e1590b4-f050-4842-9ae1-530950b8f5a6",
+    "iRAGE Capital": "30be9ce1-4d0f-479c-8b8c-617c0ef33859"
+  }
+}

@@ -23,7 +23,7 @@ struct LoginView: View {
                 Text("JTracker")
                     .font(.display(38, weight: .bold))
                     .foregroundStyle(.ink)
-                Text("Track and send cold mails from your Gmail.")
+                Text("Track and send mails from your Gmail.")
                     .font(.subheadline)
                     .foregroundStyle(.inkMuted)
                     .multilineTextAlignment(.center)
@@ -46,7 +46,7 @@ struct LoginView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .primaryButton()
             .controlSize(.large)
             .disabled(gmail.isConnecting)
 
@@ -56,7 +56,7 @@ struct LoginView: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.paper)
+        .paperScreen()
         // Connecting hands off to a Google sheet and comes back minutes later in
         // the worst case, so the outcome is announced rather than only shown.
         .sensoryFeedback(trigger: gmail.errorMessage != nil) { _, failed in
@@ -65,14 +65,8 @@ struct LoginView: View {
         .sensoryFeedback(trigger: gmail.isConnected) { _, connected in
             connected ? .success : nil
         }
-        .alert(
-            "Couldn't connect Gmail",
-            isPresented: Binding(get: { gmail.errorMessage != nil },
-                                 set: { if !$0 { gmail.errorMessage = nil } })
-        ) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(gmail.errorMessage ?? "")
+        .messageAlert("Couldn't connect Gmail", message: gmail.errorMessage) {
+            gmail.errorMessage = nil
         }
     }
 }

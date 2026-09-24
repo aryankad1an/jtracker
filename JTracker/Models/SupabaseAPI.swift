@@ -1,46 +1,177 @@
 import Foundation
 
 /// Talks to Supabase's auto-generated REST API (PostgREST). Companies and
-/// recruiters are a shared catalog; each user's Home selection is stored on-device
+/// contacts are a shared catalog; each user's Home selection is stored on-device
 /// (client-side), while sent records (`mail_sends`) stay server-side.
 enum SupabaseAPI {
-    // MARK: - Catalog (every company, with recruiters)
+    // MARK: - Catalog (every company, with contacts)
 
-    /// Every company in the shared catalog, each with its recruiters and sector.
-    /// A left join, so companies with no recruiters are included too — the
+    /// How many companies one page of the catalog holds.
+    nonisolated static let defaultPageSize = 50
+
+    /// Every company in the shared catalog, each with its contacts and sector.
+    /// A left join, so companies with no contacts are included too — the
     /// Companies list decides whether to show them. Sorted by name.
     ///
-    /// The recruiter columns are selected with `*` rather than by name for the
+    /// The contact columns are selected with `*` rather than by name for the
     /// same reason `fetchSends` does it: naming a column PostgREST doesn't have
     /// yet fails the whole request, and `greeting_name` only exists once the
     /// migration in the README has been run.
-    static func fetchAllCompanies() async throws -> [Job] {
-        let request = makeRequest(path: "companies", query: [
-            URLQueryItem(name: "select", value: "id,name,sector,recruiters(*)"),
+    static func fetchAllCompanies(limit: Int = defaultPageSize, offset: Int = 0) async throws -> [Job] {
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "select", value: "*,recruiters(*)"),
             URLQueryItem(name: "order", value: "name")
+        ]
+        if limit > 0 {
+            queryItems.append(URLQueryItem(name: "limit", value: String(limit)))
+            queryItems.append(URLQueryItem(name: "offset", value: String(offset)))
+        }
+        let request = makeRequest(path: "companies", query: queryItems)
+        let data = try await send(request)
+        // `select=*` returns whatever columns exist, so whether `domains` is
+        // among them says whether its migration has run — known from the first
+        // load rather than discovered by a failed save.
+        if let probe = try? decoder.decode([ColumnProbe].self, from: data).first {
+            domainsColumnMissing = !probe.hasDomains
+        }
+        return try decoder.decode([Job].self, from: data)
+    }
+
+    private struct ColumnProbe: Decodable {
+        let hasDomains: Bool
+        private enum Key: String, CodingKey { case domains }
+        init(from decoder: Decoder) throws {
+            hasDomains = try decoder.container(keyedBy: Key.self).contains(.domains)
+        }
+    }
+
+    /// Search the shared catalog for companies matching a query string across company name,
+    /// sector, domain, and contact name/email/position.
+    static func searchCompanies(query: String, limit: Int = defaultPageSize) async throws -> [Job] {
+        // Characters that carry meaning in a PostgREST `or=(…)` filter would change
+        // the shape of the filter rather than the value searched for.
+        let reserved = CharacterSet(charactersIn: ",()*\"\\%")
+        let cleaned = query.components(separatedBy: reserved).joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard !cleaned.isEmpty else { return [] }
+        let pattern = "*\(cleaned)*"
+
+        // 1. Companies by name or sector — and by domain, when the query is one.
+        //    The domains column only exists once its migration has run; without
+        //    it the filter is rejected, so retry without it rather than failing
+        //    the whole search.
+        let domain = MailDomain.clean(cleaned)
+        func companySearch(includingDomains: Bool) -> URLRequest {
+            var filters = ["name.ilike.\(pattern)", "sector.ilike.\(pattern)"]
+            if includingDomains, let domain { filters.append("domains.cs.{\(domain)}") }
+            return makeRequest(path: "companies", query: [
+                URLQueryItem(name: "select", value: "*,recruiters(*)"),
+                URLQueryItem(name: "or", value: "(" + filters.joined(separator: ",") + ")"),
+                URLQueryItem(name: "limit", value: String(limit)),
+                URLQueryItem(name: "order", value: "name")
+            ])
+        }
+        var foundCompanies: [Job]
+        do {
+            foundCompanies = try decoder.decode([Job].self,
+                                                from: try await send(companySearch(includingDomains: !domainsColumnMissing)))
+        } catch SupabaseError.schemaOutOfDate where !domainsColumnMissing {
+            domainsColumnMissing = true
+            foundCompanies = try decoder.decode([Job].self,
+                                                from: try await send(companySearch(includingDomains: false)))
+        }
+
+        // 2. Companies that employ a matching contact (by name, email or position).
+        let contactReq = makeRequest(path: "recruiters", query: [
+            URLQueryItem(name: "select", value: "company_id"),
+            URLQueryItem(name: "or", value: "(name.ilike.\(pattern),email.ilike.\(pattern),position.ilike.\(pattern))"),
+            URLQueryItem(name: "limit", value: String(limit))
+        ])
+        struct ContactRow: Decodable { let company_id: String? }
+        let rows = try decoder.decode([ContactRow].self, from: try await send(contactReq))
+        let existingIDs = Set(foundCompanies.map(\.id))
+        let missingIDs = Array(Set(rows.compactMap(\.company_id)).subtracting(existingIDs))
+        if !missingIDs.isEmpty {
+            let missingReq = makeRequest(path: "companies", query: [
+                URLQueryItem(name: "select", value: "*,recruiters(*)"),
+                URLQueryItem(name: "id", value: "in.(\(missingIDs.joined(separator: ",")))")
+            ])
+            foundCompanies += try decoder.decode([Job].self, from: try await send(missingReq))
+        }
+
+        return foundCompanies.sortedByName()
+    }
+
+    /// Every company that `domain` belongs to: the ones listing it on their row,
+    /// and the ones with a contact at that domain. Used to point a new contact at
+    /// the company it most likely belongs to, so the same company never gets
+    /// entered twice under two names.
+    static func companies(forDomain domain: String) async throws -> [Job] {
+        guard MailDomain.isWellFormed(domain) else { return [] }
+        var found: [Job] = []
+        if !domainsColumnMissing {
+            let request = makeRequest(path: "companies", query: [
+                URLQueryItem(name: "select", value: "*,recruiters(*)"),
+                URLQueryItem(name: "domains", value: "cs.{\(domain)}")
+            ])
+            do {
+                found = try decoder.decode([Job].self, from: try await send(request))
+            } catch SupabaseError.schemaOutOfDate {
+                domainsColumnMissing = true
+            }
+        }
+
+        struct ContactRow: Decodable { let company_id: String? }
+        let contactReq = makeRequest(path: "recruiters", query: [
+            URLQueryItem(name: "select", value: "company_id"),
+            URLQueryItem(name: "email", value: "ilike.*@\(domain)"),
+            URLQueryItem(name: "limit", value: "200")
+        ])
+        let rows = try decoder.decode([ContactRow].self, from: try await send(contactReq))
+        let missingIDs = Set(rows.compactMap(\.company_id)).subtracting(found.map(\.id))
+        if !missingIDs.isEmpty {
+            let request = makeRequest(path: "companies", query: [
+                URLQueryItem(name: "select", value: "*,recruiters(*)"),
+                URLQueryItem(name: "id", value: "in.(\(missingIDs.joined(separator: ",")))")
+            ])
+            found += try decoder.decode([Job].self, from: try await send(request))
+        }
+        return found
+    }
+
+    /// Fetch a single company by id from Supabase with all contacts and sector.
+    static func fetchCompany(id: String) async throws -> Job? {
+        let request = makeRequest(path: "companies", query: [
+            URLQueryItem(name: "select", value: "*,recruiters(*)"),
+            URLQueryItem(name: "id", value: "eq.\(id)")
         ])
         let data = try await send(request)
-        return try decoder.decode([Job].self, from: data)
+        return try decoder.decode([Job].self, from: data).first
     }
 
     // MARK: - Home selection (tracked companies, per user)
 
-    /// This user's tracked companies (with recruiters), resolved in one request:
-    /// PostgREST embeds the `companies` row (and its `recruiters`) for each
+    /// This user's tracked companies (with contacts), resolved in one request:
+    /// PostgREST embeds the `companies` row (and its `contacts`) for each
     /// `tracked_companies` membership row, so the whole Home payload comes back in
     /// a single round trip. Sorted by name here since the join order isn't stable.
-    static func fetchTrackedCompanies(userEmail: String) async throws -> [Job] {
-        let request = makeRequest(path: "tracked_companies", query: [
-            URLQueryItem(name: "select", value: "companies(id,name,recruiters(*))"),
+    static func fetchTrackedCompanies(userEmail: String, limit: Int? = nil, offset: Int = 0) async throws -> [Job] {
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "select", value: "companies(*,recruiters(*))"),
             URLQueryItem(name: "user_email", value: "eq.\(userEmail)")
-        ])
+        ]
+        if let limit, limit > 0 {
+            queryItems.append(URLQueryItem(name: "limit", value: String(limit)))
+            queryItems.append(URLQueryItem(name: "offset", value: String(offset)))
+        }
+        let request = makeRequest(path: "tracked_companies", query: queryItems)
         let data = try await send(request)
         // Each row wraps the embedded company; a company deleted out from under a
         // membership row (before the FK cascade fires) comes back null — skip it.
         struct Row: Decodable { let companies: Job? }
         return try decoder.decode([Row].self, from: data)
             .compactMap(\.companies)
-            .sorted { $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedAscending }
+            .sortedByName()
     }
 
     /// Just the tracked company ids for this user. Used once per account to lift a
@@ -73,47 +204,48 @@ enum SupabaseAPI {
     }
 
     /// Every send this user has made, newest first. One row per send, so the
-    /// same recruiter can appear multiple times (the send history).
+    /// same contact can appear multiple times (the send history).
     ///
     /// Selects `*` rather than a column list on purpose: the reply-tracking
     /// columns only exist once the migration in the README has been run, and
     /// naming a column PostgREST doesn't have fails the whole request. With `*`
     /// the app runs either way and simply has no reply data until then.
-    static func fetchSends(userEmail: String) async throws -> [MailSend] {
+    static func fetchSends(userEmail: String, limit: Int = defaultPageSize, offset: Int = 0) async throws -> [MailSend] {
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "select", value: "*"),
+            URLQueryItem(name: "user_email", value: "eq.\(userEmail)"),
+            URLQueryItem(name: "order", value: "sent_at.desc")
+        ]
+        if limit > 0 {
+            queryItems.append(URLQueryItem(name: "limit", value: String(limit)))
+            queryItems.append(URLQueryItem(name: "offset", value: String(offset)))
+        }
+        let request = makeRequest(path: "mail_sends", query: queryItems)
+        let data = try await send(request)
+        return try decoder.decode([MailSend].self, from: data)
+    }
+
+    /// The full send history for one contact, newest first.
+    static func fetchSendHistory(userEmail: String, contactID: String) async throws -> [MailSend] {
         let request = makeRequest(path: "mail_sends", query: [
             URLQueryItem(name: "select", value: "*"),
             URLQueryItem(name: "user_email", value: "eq.\(userEmail)"),
+            URLQueryItem(name: "recruiter_id", value: "eq.\(contactID)"),
             URLQueryItem(name: "order", value: "sent_at.desc")
         ])
         let data = try await send(request)
         return try decoder.decode([MailSend].self, from: data)
     }
 
-    /// The full send history for one recruiter, newest first.
-    static func fetchSendHistory(userEmail: String, recruiterID: String) async throws -> [MailSend] {
-        let request = makeRequest(path: "mail_sends", query: [
-            URLQueryItem(name: "select", value: "*"),
-            URLQueryItem(name: "user_email", value: "eq.\(userEmail)"),
-            URLQueryItem(name: "recruiter_id", value: "eq.\(recruiterID)"),
-            URLQueryItem(name: "order", value: "sent_at.desc")
-        ])
-        let data = try await send(request)
-        return try decoder.decode([MailSend].self, from: data)
-    }
-
-    /// Build the Activity feed from the user's full send history — one entry per
-    /// send, so re-sending the same recruiter shows up as a separate row. Each
-    /// recruiter's name/position and company are resolved (even for companies the
+    /// Build the Activity feed from the user's send history — one entry per
+    /// send, so re-sending the same contact shows up as a separate row. Each
+    /// contact's name/position and company are resolved (even for companies the
     /// user no longer tracks, so history survives a Home removal). `sends` is the
     /// raw list from `fetchSends`, newest first.
     static func fetchActivity(sends: [MailSend]) async throws -> [ActivityEntry] {
         guard !sends.isEmpty else { return [] }
-        let ids = Array(Set(sends.map(\.recruiterID)))
-        let request = makeRequest(path: "recruiters", query: [
-            URLQueryItem(name: "select", value: "id,name,email,position,companies(name)"),
-            URLQueryItem(name: "id", value: "in.(\(ids.joined(separator: ",")))")
-        ])
-        let data = try await send(request)
+        let allIDs = Array(Set(sends.map(\.contactID)))
+
         struct Row: Decodable {
             let id: String
             let name: String?
@@ -122,12 +254,27 @@ enum SupabaseAPI {
             struct Company: Decodable { let name: String }
             let companies: Company?
         }
-        let rows = try decoder.decode([Row].self, from: data)
-        let byID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // 50 ids per request (a longer `in.(…)` list overflows the URL), all
+        // chunks at once rather than one after another.
+        let requests = stride(from: 0, to: allIDs.count, by: defaultPageSize).map { start in
+            makeRequest(path: "recruiters", query: [
+                URLQueryItem(name: "select", value: "id,name,email,position,companies(name)"),
+                URLQueryItem(name: "id", value: "in.(\(allIDs[start..<min(start + defaultPageSize, allIDs.count)].joined(separator: ",")))")
+            ])
+        }
+        let pages = try await withThrowingTaskGroup(of: Data.self) { group in
+            for request in requests { group.addTask { try await send(request) } }
+            return try await group.reduce(into: [Data]()) { $0.append($1) }
+        }
+        var byID: [String: Row] = [:]
+        for page in pages {
+            for row in try decoder.decode([Row].self, from: page) { byID[row.id] = row }
+        }
 
         // One entry per send, keyed by the send's own id (unique per send).
         return sends.compactMap { send -> ActivityEntry? in
-            guard let row = byID[send.recruiterID] else { return nil }
+            guard let row = byID[send.contactID] else { return nil }
             let contact = Contact(id: row.id, email: row.email ?? "", name: row.name ?? "",
                                   position: row.position ?? "", isSent: true, sentAt: send.sentAt,
                                   sentSubject: send.subject, sentBody: send.body,
@@ -139,58 +286,92 @@ enum SupabaseAPI {
 
     // MARK: - Company catalog writes
 
-    /// Create a company in the catalog and return its new id.
-    static func addCompany(name: String, sector: String?) async throws -> String {
+    /// Set once the database reports it has no `companies.domains` column — the
+    /// migration in the README hasn't run. Domains can't be stored until it has,
+    /// so the store tells the user rather than dropping them silently.
+    private(set) static var domainsColumnMissing = false
+
+    /// Create a company in the catalog and return its new id. The company is
+    /// created even when its domains can't be stored (see `domainsColumnMissing`).
+    static func addCompany(name: String, sector: String?, domains: [String] = []) async throws -> String {
         var body: [String: Any] = ["name": name]
         if let sector, !sector.isEmpty { body["sector"] = sector }
-        return try await insertReturningID(path: "companies", body: body)
+        if !domains.isEmpty, !domainsColumnMissing { body["domains"] = domains }
+        do {
+            return try await insertReturningID(path: "companies", body: body)
+        } catch SupabaseError.schemaOutOfDate where body["domains"] != nil {
+            domainsColumnMissing = true
+            body.removeValue(forKey: "domains")
+            return try await insertReturningID(path: "companies", body: body)
+        }
     }
 
-    /// Rename or re-sector a catalog company. Empty sector clears the column.
-    static func updateCompany(id: String, name: String, sector: String?) async throws {
-        let body: [String: Any] = [
+    /// Rename, re-sector, or replace the domains of a catalog company. Empty
+    /// sector clears the column; nil `domains` leaves them untouched.
+    static func updateCompany(id: String, name: String, sector: String?, domains: [String]? = nil) async throws {
+        var body: [String: Any] = [
             "name": name,
             "sector": (sector?.isEmpty ?? true) ? NSNull() : sector!
         ]
-        try await write(method: "PATCH", path: "companies",
-                        query: [URLQueryItem(name: "id", value: "eq.\(id)")],
-                        body: body)
+        if let domains, !domainsColumnMissing { body["domains"] = domains }
+        let query = [URLQueryItem(name: "id", value: "eq.\(id)")]
+        do {
+            try await write(method: "PATCH", path: "companies", query: query, body: body)
+        } catch SupabaseError.schemaOutOfDate where body["domains"] != nil {
+            domainsColumnMissing = true
+            body.removeValue(forKey: "domains")
+            try await write(method: "PATCH", path: "companies", query: query, body: body)
+        }
     }
 
-    /// Delete a company from the shared catalog. The database cascades this to the
-    /// company's recruiters and every user's tracked/sent rows for it.
-    static func deleteCompany(id: String) async throws {
+    /// Replace just a company's domains.
+    static func setDomains(companyID: String, domains: [String]) async throws {
+        guard !domainsColumnMissing else { return }
+        do {
+            try await write(method: "PATCH", path: "companies",
+                            query: [URLQueryItem(name: "id", value: "eq.\(companyID)")],
+                            body: ["domains": domains])
+        } catch SupabaseError.schemaOutOfDate {
+            domainsColumnMissing = true
+        }
+    }
+
+    /// Delete companies from the shared catalog, in one request. The database
+    /// cascades this to their contacts and every user's tracked/sent rows.
+    static func deleteCompanies(ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
         try await write(method: "DELETE", path: "companies",
-                        query: [URLQueryItem(name: "id", value: "eq.\(id)")])
+                        query: [URLQueryItem(name: "id", value: "in.(\(ids.joined(separator: ",")))")])
     }
 
-    // MARK: - Cold mail (recruiter) writes
+    // MARK: - Contact writes
 
-    /// Add a recruiter (upserting on (company_id, email) so it's identified by
+    /// Add a contact (upserting on (company_id, email) so it's identified by
     /// email within a company) and return its id, so the caller can record a send.
     @discardableResult
-    static func addRecruiter(companyID: String, contact: Contact) async throws -> String {
-        var body = recruiterBody(contact)
+    static func addContact(companyID: String, contact: Contact) async throws -> String {
+        var body = contactBody(contact)
         body["company_id"] = companyID
         do {
             return try await insertReturningID(path: "recruiters", body: body,
                                                onConflict: "company_id,email")
-        } catch SupabaseError.schemaOutOfDate {
+        } catch SupabaseError.schemaOutOfDate where !greetingColumnMissing {
+            greetingColumnMissing = true
             return try await insertReturningID(path: "recruiters",
                                                body: withoutGreetingName(body),
                                                onConflict: "company_id,email")
         }
     }
 
-    static func updateRecruiter(_ contact: Contact) async throws {
+    static func updateContact(_ contact: Contact) async throws {
         let query = [URLQueryItem(name: "id", value: "eq.\(contact.id)")]
         do {
             try await write(method: "PATCH", path: "recruiters", query: query,
-                            body: recruiterBody(contact))
-        } catch SupabaseError.schemaOutOfDate {
+                            body: contactBody(contact))
+        } catch SupabaseError.schemaOutOfDate where !greetingColumnMissing {
             greetingColumnMissing = true
             try await write(method: "PATCH", path: "recruiters", query: query,
-                            body: withoutGreetingName(recruiterBody(contact)))
+                            body: withoutGreetingName(contactBody(contact)))
         }
     }
 
@@ -206,27 +387,33 @@ enum SupabaseAPI {
         return body
     }
 
-    /// Flag recruiters valid or invalid in the shared catalog — the whole set in
-    /// one request. Deliberately separate from `updateRecruiter` (and absent from
-    /// `recruiterBody`) so an ordinary field edit can never silently flip validity
+    /// Flag contacts valid or invalid in the shared catalog — the whole set in
+    /// one request. Deliberately separate from `updateContact` (and absent from
+    /// `contactBody`) so an ordinary field edit can never silently flip validity
     /// back, e.g. when someone corrects a bad address before re-validating it.
-    static func setRecruiterValidity(ids: [String], isValid: Bool) async throws {
+    static func setContactValidity(ids: [String], isValid: Bool) async throws {
         guard !ids.isEmpty else { return }
         try await write(method: "PATCH", path: "recruiters",
                         query: [URLQueryItem(name: "id", value: "in.(\(ids.joined(separator: ",")))")],
                         body: ["is_valid": isValid])
     }
 
-    static func deleteRecruiter(id: String) async throws {
+    static func deleteContact(id: String) async throws {
+        try await deleteContacts(ids: [id])
+    }
+
+    /// Delete several contacts in one request.
+    static func deleteContacts(ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
         try await write(method: "DELETE", path: "recruiters",
-                        query: [URLQueryItem(name: "id", value: "eq.\(id)")])
+                        query: [URLQueryItem(name: "id", value: "in.(\(ids.joined(separator: ",")))")])
     }
 
     // MARK: - Per-user sent records (mail_sends)
 
-    /// Append a send event to this user's history for `recruiterID`. Each call
-    /// is a new row, so re-sending builds up the history rather than overwriting.
-    /// Append a whole run's sends in one request.
+    /// Append a whole run's sends to this user's history in one request. Each
+    /// send is a new row, so re-sending builds up the history rather than
+    /// overwriting it.
     ///
     /// PostgREST takes an array, and a batch send is the common case — a hundred
     /// mails used to mean a hundred sequential round trips *after* the run, with
@@ -256,7 +443,7 @@ enum SupabaseAPI {
         } catch SupabaseError.schemaOutOfDate {
             // The reply-tracking columns aren't there yet. Record the sends
             // without them rather than losing them: an unrecorded send is a
-            // recruiter who gets mailed a second time, which is far worse than
+            // contact who gets mailed a second time, which is far worse than
             // missing metadata.
             replyColumnsMissing = true
             let stripped = rows.map { row -> [String: Any] in
@@ -345,22 +532,27 @@ enum SupabaseAPI {
                         prefer: "return=minimal,resolution=merge-duplicates")
     }
 
-    static func deleteTemplate(id: UUID) async throws {
+    /// Delete templates in one request.
+    static func deleteTemplates(ids: [UUID]) async throws {
+        guard !ids.isEmpty else { return }
         try await write(method: "DELETE", path: "templates",
-                        query: [URLQueryItem(name: "id", value: "eq.\(id.uuidString)")])
+                        query: [URLQueryItem(name: "id", value: "in.(\(ids.map(\.uuidString).joined(separator: ",")))")])
     }
 
-    /// A recruiter row body. Empty text fields become null so edits can clear a
+    /// A contact row body. Empty text fields become null so edits can clear a
     /// value. Sent state lives in `mail_sends`, not here.
-    private static func recruiterBody(_ contact: Contact) -> [String: Any] {
+    /// Once `greeting_name` is known to be missing it's left out up front, so
+    /// every later save costs one request rather than a failure and a retry.
+    private static func contactBody(_ contact: Contact) -> [String: Any] {
         func value(_ s: String?) -> Any { (s?.isEmpty ?? true) ? NSNull() : s! }
-        return [
+        let body: [String: Any] = [
             "name": value(contact.name),
             "email": value(contact.email),
             "position": value(contact.position),
             "phone": value(contact.phone),
             "greeting_name": value(contact.greetingName)
         ]
+        return greetingColumnMissing ? withoutGreetingName(body) : body
     }
 
     // MARK: - Plumbing
@@ -382,14 +574,16 @@ enum SupabaseAPI {
         }
         guard (200..<300).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? "status \(http.statusCode)"
-            // A unique-constraint violation (Postgres 23505) means the name
-            // already exists — surface a friendly message instead of raw SQL.
+            // A unique-constraint violation (Postgres 23505) means the row already
+            // exists — surface a friendly message instead of raw SQL.
             if http.statusCode == 409 || body.contains("\"23505\"") {
-                throw SupabaseError.duplicateCompany
+                throw request.url?.lastPathComponent == "recruiters"
+                    ? SupabaseError.duplicateContact : SupabaseError.duplicateCompany
             }
-            // PGRST204: PostgREST knows the table but not a column we sent. That's
-            // a pending migration, not a bug in the request.
-            if body.contains("PGRST204") {
+            // PGRST204 (a column we wrote) or 42703 (a column we filtered on):
+            // PostgREST knows the table but not the column. That's a pending
+            // migration, not a bug in the request.
+            if body.contains("PGRST204") || body.contains("\"42703\"") {
                 throw SupabaseError.schemaOutOfDate
             }
             throw SupabaseError.server(body)
@@ -491,8 +685,9 @@ enum SupabaseAPI {
 enum SupabaseError: LocalizedError {
     case badResponse
     case duplicateCompany
-    /// The database is missing a column this build writes to — the reply-tracking
-    /// migration in the README hasn't been run yet.
+    case duplicateContact
+    /// The database is missing a column this build uses — one of the migrations
+    /// in the README hasn't been run yet.
     case schemaOutOfDate
     case server(String)
 
@@ -500,8 +695,9 @@ enum SupabaseError: LocalizedError {
         switch self {
         case .badResponse: return "Unexpected response from the server."
         case .duplicateCompany: return "A company with that name already exists."
+        case .duplicateContact: return "A contact with that email already exists at this company."
         case .schemaOutOfDate:
-            return "This database is missing the reply-tracking columns. Run the migration in the README."
+            return "The database is missing columns this version of the app uses. Run the migrations in the README."
         case .server(let message): return message
         }
     }
