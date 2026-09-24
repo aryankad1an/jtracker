@@ -140,10 +140,8 @@ struct JobDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search contacts")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if selection.isSelecting {
-                    DoneButton { selection.exit() }
-                } else {
+            if !selection.isSelecting {
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
                             editingCompany = job
@@ -172,8 +170,8 @@ struct JobDetailView: View {
             }
         }
         .selectionActions(
-            isSelecting: selection.isSelecting,
-            count: selection.count,
+            selection,
+            all: job.map { sortedContacts($0).map(\.id) } ?? [],
             noun: SelectionNoun(singular: "contact", plural: "contacts"),
             confirmingDelete: $confirmingDelete,
             deleteMessage: "This permanently deletes the selected contacts from the shared database, for every user. Sent ones are kept. This can't be undone.",
@@ -339,7 +337,7 @@ struct JobDetailView: View {
                 // many — the faces are what you'd open it to look for.
                 if !showsContacts && !job.contacts.isEmpty {
                     avatarPeek(job.validContacts.isEmpty ? job.contacts : job.validContacts)
-                        .transition(LiquidMaterialize(scale: 0.7, blur: 6, anchor: .trailing))
+                        .transition(LiquidMaterialize(scale: 0.7, anchor: .trailing))
                 }
 
                 Image(systemName: "chevron.down")

@@ -176,7 +176,7 @@ struct ContactFormView: View {
             .font(.subheadline.weight(.semibold))
             .primaryButton()
         }
-        .transition(LiquidMaterialize(scale: 0.94, blur: 8, anchor: .top))
+        .transition(LiquidMaterialize(scale: 0.94, anchor: .top))
     }
 
     private var companyFooter: String? {

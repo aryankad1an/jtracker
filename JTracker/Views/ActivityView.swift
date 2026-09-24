@@ -16,6 +16,9 @@ struct ActivityView: View {
     @State private var lane: Lane = .all
     @State private var searchText = ""
     @State private var summaryItem: ActivityEntry?
+    /// How many entries are built. The feed is attached 50 at a time: the next
+    /// page when the end of the current one scrolls into view.
+    @State private var limit = 50
 
     var body: some View {
         NavigationStack {
@@ -36,32 +39,37 @@ struct ActivityView: View {
         }
     }
 
+    /// A `List`, not a `ScrollView` of a `LazyVStack`: the feed runs to hundreds
+    /// of mails, and a lazy stack keeps every row it has ever built alive, where
+    /// a list reuses its cells the way the system's own long feeds do.
     private var content: some View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                ReplyCheckStrip(sync: replySync) { Task { await checkForReplies() } }
-                    .padding(.horizontal, 4)
+        let entries = Self.feed(jobStore.activity, lane: lane, query: query)
+        return List {
+            ReplyCheckStrip(sync: replySync) { Task { await checkForReplies() } }
+                .padding(.horizontal, 4)
+                .cardRow(top: 6, bottom: 6)
 
-                SegmentedSelector(segments: [
-                    (.all, "All", "tray.full"),
-                    (.replied, "Replied", "arrowshape.turn.up.left.fill"),
-                    (.waiting, "Waiting", "hourglass")
-                ], selection: $lane)
+            SegmentedSelector(segments: [
+                (.all, "All"),
+                (.replied, "Replied"),
+                (.waiting, "Waiting")
+            ], selection: $lane)
+                .cardRow(top: 4, bottom: 10)
 
-                ActivityFeed(entries: Self.feed(jobStore.activity, lane: lane, query: query),
-                             isReplyOrdered: lane == .replied) { summaryItem = $0 }
-                    // A new filter is a new feed: back to its first page.
-                    .id("\(lane)|\(query)")
-            }
-            .padding(.horizontal, Theme.Space.gutter)
-            .padding(.top, 6)
-            .padding(.bottom, 28)
+            ActivityFeed(entries: entries, limit: limit,
+                         isReplyOrdered: lane == .replied,
+                         onOpen: { summaryItem = $0 },
+                         onReachEnd: { limit += 50 })
         }
+        .cardList()
         .scrollDismissesKeyboard(.immediately)
         // A pull here means "is there anything new?", and the answer to that lives
         // in Gmail, not in the database.
         .refreshable { await checkForReplies() }
+        // A new filter is a new feed: back to its first page.
+        .onChange(of: lane) { limit = 50 }
+        .onChange(of: query) { limit = 50 }
     }
 
     /// The entries in `lane` matching `query`. The store's order is newest send
@@ -104,28 +112,34 @@ struct ActivityView: View {
 
 /// The mails, hung off a time axis and grouped by day. Built 50 at a time: the
 /// next page is attached when the end of the current one scrolls into view.
+///
+/// Every row is a list row with no insets between them, so the time axis drawn
+/// behind each one runs unbroken from row to row.
 private struct ActivityFeed: View {
     let entries: [ActivityEntry]
+    let limit: Int
     let isReplyOrdered: Bool
     let onOpen: (ActivityEntry) -> Void
-
-    @State private var limit = 50
+    let onReachEnd: () -> Void
 
     var body: some View {
-        let shown = entries.prefix(limit)
         if entries.isEmpty {
             InlineEmptyState(title: "Nothing here", systemImage: "line.3.horizontal.decrease",
                              message: "No mail matches this lane and filter.")
+                .cardRow()
         } else {
-            ForEach(Self.days(shown, isReplyOrdered: isReplyOrdered), id: \.day) { group in
+            ForEach(Self.days(entries.prefix(limit), isReplyOrdered: isReplyOrdered), id: \.day) { group in
                 FeedDayHeader(day: group.day, count: group.entries.count)
+                    .cardRow(top: 0, bottom: 0)
                 ForEach(group.entries) { entry in
                     FeedRow(entry: entry, isReplyOrdered: isReplyOrdered) { onOpen(entry) }
+                        .cardRow(top: 0, bottom: 0)
                 }
             }
             if entries.count > limit {
                 LoadingRow()
-                    .onAppear { limit += 50 }
+                    .cardRow()
+                    .onAppear(perform: onReachEnd)
             }
         }
     }

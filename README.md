@@ -94,11 +94,14 @@ Four rules the components encode:
   day counts are set in the system serif; everything else is the system sans. A
   serif numeral among sans labels reads as a headline without being large.
 - **Content is paper, controls are glass.** Cards and rows stay paper; what
-  floats over them — selection and send bars, the undo and saving capsules,
-  buttons, the lane selector — is Liquid Glass. Glass arrives the way liquid
-  does: it condenses out of a blur rather than sliding in (`LiquidMotion.swift`),
-  tapping a card zooms it into its screen, and the splash is a graph seen
-  through a glass lens whose droplets fuse into it as the app loads.
+  floats over them is Liquid Glass. Tapping a card zooms it into its screen,
+  and the splash is a graph seen through a glass lens whose droplets fuse into
+  it as the app loads.
+- **System components before custom ones.** Lists are `List`s, so taps, holds
+  (context menus), swipes and two-finger multi-select are the system's own.
+  Selection mode swaps the tab bar for the system bottom toolbar, as Photos
+  does (`selectionActions`); the lane selector is the system segmented control;
+  press styles don't buzz on touch-down; and no transition animates a blur.
 
 ## Requirements
 

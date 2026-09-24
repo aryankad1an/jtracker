@@ -140,8 +140,8 @@ struct TemplateEditorView: View {
 
     private var modePicker: some View {
         SegmentedSelector(segments: [
-            (Mode.write, "Write", "square.and.pencil"),
-            (Mode.preview, "Preview", "eye")
+            (Mode.write, "Write"),
+            (Mode.preview, "Preview")
         ], selection: $mode)
             .padding(.horizontal)
             .padding(.bottom, 10)

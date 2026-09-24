@@ -22,10 +22,6 @@ struct HomeView: View {
     /// list's primary action (not `NavigationLink`) so the card fills the row
     /// without the system's chevron and inset.
     @State private var path = NavigationPath()
-    /// Companies removed in the last action, kept briefly so the Undo bar can
-    /// restore them. Cleared after a few seconds or once Undo is tapped.
-    @State private var undoJobs: [Job] = []
-    @State private var undoTask: Task<Void, Never>?
     @State private var searchText = ""
     @State private var isAddingContact = false
     /// The companies a Send from the selection bar is choosing recipients at.
@@ -106,10 +102,8 @@ struct HomeView: View {
                     .navigationTransition(.zoom(sourceID: companyID, in: zoom))
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if selection.isSelecting {
-                        DoneButton { selection.exit() }
-                    } else {
+                if !selection.isSelecting {
+                    ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             Button { isAddingContact = true } label: {
                                 Label("Add Contact", systemImage: "person.crop.circle.badge.plus")
@@ -127,8 +121,8 @@ struct HomeView: View {
                 }
             }
             .selectionActions(
-                isSelecting: selection.isSelecting,
-                count: selection.count,
+                selection,
+                all: filteredJobs.map(\.id),
                 noun: SelectionNoun(singular: "company", plural: "companies"),
                 sendableCount: selectedCompanies.reduce(0) { $0 + $1.validContacts.count },
                 onSend: { sendingTo = SendTarget(companies: selectedCompanies) },
@@ -141,9 +135,7 @@ struct HomeView: View {
                     remove(selected)
                 }
             )
-            .safeAreaInset(edge: .bottom) {
-                if !undoJobs.isEmpty && !selection.isSelecting { undoBar }
-            }
+            .undoBanner()
             .sheet(isPresented: $showingQuickActions) {
                 // The card opens into the screen it summarises.
                 QuickActionsView()
@@ -226,61 +218,23 @@ struct HomeView: View {
 
     /// Untrack companies right away and offer a brief Undo. Untracking is
     /// reversible (it doesn't touch the shared catalog), so there's no confirm.
+    ///
+    /// The Undo is the app's one shared banner rather than a capsule of Home's
+    /// own — the same object, in the same place, that every other reversible
+    /// edit in the app offers.
     private func remove(_ jobs: [Job]) {
         guard !jobs.isEmpty else { return }
         // The flat knock, not the light one: this is the destructive edge of the
         // swipe, and it should feel unlike selecting the row it just removed.
         Haptics.thud()
         for job in jobs { jobStore.deleteJob(job) }
-        withAnimation(Theme.Motion.liquid) { undoJobs = jobs }
-        scheduleUndoDismiss()
-    }
-
-    private func undo() {
-        undoTask?.cancel()
-        Haptics.success()
-        for job in undoJobs { jobStore.restoreJob(job) }
-        withAnimation(Theme.Motion.liquid) { undoJobs = [] }
-    }
-
-    private func scheduleUndoDismiss() {
-        undoTask?.cancel()
-        undoTask = Task {
-            try? await Task.sleep(for: .seconds(6))
-            guard !Task.isCancelled else { return }
-            // Silent on the way out. The bar timing out isn't something the user
-            // did, and a knock here would read as a second thing happening.
-            withAnimation(Theme.Motion.liquid) { undoJobs = [] }
+        let store = jobStore
+        UndoCoordinator.shared.stage(
+            message: jobs.count == 1 ? "Untracked \(jobs[0].company)" : "Untracked \(jobs.count) companies",
+            duration: 6
+        ) {
+            for job in jobs { store.restoreJob(job) }
         }
-    }
-
-    private var undoBar: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "pin.slash")
-                .foregroundStyle(.inkMuted)
-            Text(undoJobs.count == 1
-                 ? "Untracked \(undoJobs[0].company)"
-                 : "Untracked \(undoJobs.count) companies")
-                .font(.subheadline)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            // A custom button style drops the accent tint the default one paints,
-            // so the colour is restated here — Undo has to keep reading as the
-            // one tappable word in the bar.
-            Button("Undo") { undo() }
-                .font(.subheadline.weight(.semibold))
-                .bouncyButtonStyle()
-                .foregroundStyle(.tint)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .glassEffect(.regular, in: .capsule)
-        .padding(.horizontal)
-        .padding(.bottom, 8)
-        // Scaled as well as moved: the capsule grows into place from just under
-        // the edge rather than sliding up at full size, which is what makes it
-        // read as a thing that arrived rather than a thing that was always there.
-        .transition(.glassRise)
     }
 }
 

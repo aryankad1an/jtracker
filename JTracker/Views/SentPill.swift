@@ -27,7 +27,7 @@ struct StatusChip: View {
         // Replied, anything becoming Invalid. Springing in from the trailing edge
         // it shares with the chip it replaced makes that read as a swap rather
         // than as two unrelated fades.
-        .transition(LiquidMaterialize(scale: 0.7, blur: 4, anchor: .trailing))
+        .transition(LiquidMaterialize(scale: 0.7, anchor: .trailing))
     }
 }
 

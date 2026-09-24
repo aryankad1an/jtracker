@@ -59,17 +59,11 @@ struct TemplatesView: View {
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $searchText, prompt: "Search templates")
             .toolbar {
-                if selection.isSelecting {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        DoneButton { selection.exit() }
-                    }
-                } else {
+                if !selection.isSelecting {
+                    // A word, not a glyph, as in Photos and Files.
                     ToolbarItem(placement: .topBarTrailing) {
                         if !store.templates.isEmpty {
-                            Button { selection.enter() } label: {
-                                Image(systemName: "checkmark.circle")
-                            }
-                            .accessibilityLabel("Select templates")
+                            Button("Select") { selection.enter() }
                         }
                     }
                     // Writing a template is what this screen is for, so it's a
@@ -83,8 +77,8 @@ struct TemplatesView: View {
                 }
             }
             .selectionActions(
-                isSelecting: selection.isSelecting,
-                count: selection.count,
+                selection,
+                all: rows.map(\.id),
                 noun: SelectionNoun(singular: "template", plural: "templates"),
                 confirmingDelete: $confirmingDelete,
                 onDelete: deleteSelected

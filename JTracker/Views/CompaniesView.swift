@@ -100,17 +100,13 @@ struct CompaniesView: View {
             // Cancelled and restarted per keystroke, which is what debounces it.
             .task(id: query) { await jobStore.searchCompanies(query: query) }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if selection.isSelecting {
-                        DoneButton { selection.exit() }
-                    } else {
-                        menu
-                    }
+                if !selection.isSelecting {
+                    ToolbarItem(placement: .topBarTrailing) { menu }
                 }
             }
             .selectionActions(
-                isSelecting: selection.isSelecting,
-                count: selection.count,
+                selection,
+                all: rows.map(\.id),
                 noun: SelectionNoun(singular: "company", plural: "companies"),
                 confirmingDelete: $confirmingDelete,
                 deleteMessage: "This permanently deletes the selected companies — and their contacts — from the shared database, for every user. This can't be undone.",
