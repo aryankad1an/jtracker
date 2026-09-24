@@ -34,12 +34,52 @@
       "why": "med.ge.com is GE HealthCare's mail domain, not GE's"
     },
     "ivp.in": {
-      "to": "Ivpindia",
-      "why": "ivp.in is Indus Valley Partners; ivp.com is Institutional Venture Partners"
+      "create": "Indus Valley Partners",
+      "why": "ivp.in is Indus Valley Partners; ivp.com is Institutional Venture Partners and ivpindia.com is IVP Limited (chemicals)"
     },
     "cms.ac.in": {
       "create": "CMS Business School (Jain University)",
       "why": "cms.ac.in is a business school; cms.co.in is CMS Info Systems"
+    },
+    "uste3.com": {
+      "create": "UST (e3)",
+      "id": "81d39bf1-02ed-4483-9df5-f0a51417e173",
+      "why": "uste3.com is a US home-delivery logistics company (Greenville, SC), not UST the IT-services firm (ust.com)"
+    },
+    "csgi.com": {
+      "create": "CSG International",
+      "id": "2a8186b4-cf65-4621-83e3-ab45675fe3ef",
+      "why": "csgi.com is CSG International; csgservices.com is a different company, CSG Services"
+    },
+    "meta.com.br": {
+      "create": "Meta IT (Brazil)",
+      "id": "8b4a7b55-1c04-4ae2-b63c-edb276892205",
+      "why": "meta.com.br is Meta, a Brazilian IT consultancy — not Meta Platforms"
+    },
+    "heizen.work": {
+      "create": "Heizen (formerly OpenGig)",
+      "id": "b887b1d8-0f29-45e3-a226-e3849de9b63c",
+      "why": "heizen.work is Heizen (formerly OpenGig); heizen.io belongs to a Brazilian retailer also called Heizen"
+    },
+    "zeptoapp.com": {
+      "create": "Zeptoapp",
+      "id": "7efae99c-ff6c-421a-9184-a2b6ac22e1f8",
+      "why": "zeptoapp.com is a push-notification app, not Zepto the quick-commerce company (zeptonow.com)"
+    },
+    "rnf.tech": {
+      "create": "Rnf",
+      "id": "13c5fcbd-c5fa-428b-88be-27a1df025b12",
+      "why": "no evidence rnf.tech belongs to RNF Technologies (rnftechnologies.com); kept separate"
+    },
+    "servicenow.ind.in": {
+      "create": "Servicenow Ind",
+      "id": "6ff90b1b-432e-4e87-bd75-ab1f7b078ca6",
+      "why": "no evidence servicenow.ind.in belongs to ServiceNow; kept separate"
+    },
+    "titan.email": {
+      "create": "Titan Email",
+      "id": "ef95108f-4506-443c-8af9-0474af3fd97b",
+      "why": "titan.email is Titan, an email-hosting company; its own staff mail from it (customers use their own domains)"
     }
   },
   "merges": [
@@ -147,13 +187,6 @@
       ]
     },
     {
-      "into": "CSG Systems",
-      "name": "CSG",
-      "from": [
-        "Csgi"
-      ]
-    },
-    {
       "into": "Curefit",
       "name": "Cult.fit",
       "from": [
@@ -246,8 +279,7 @@
       "into": "Meta (Facebook)",
       "name": "Meta",
       "from": [
-        "Facebook",
-        "Meta"
+        "Facebook"
       ]
     },
     {
@@ -338,12 +370,6 @@
       "name": "Hudson's Bay Company",
       "from": [
         "Partners Hbc Ca"
-      ]
-    },
-    {
-      "into": "Heizen",
-      "from": [
-        "Heizen Work"
       ]
     },
     {
@@ -614,7 +640,8 @@
       "into": "QI Capital",
       "from": [
         "QI-Cap Securities"
-      ]
+      ],
+      "name": "QI-Cap"
     },
     {
       "into": "Qnance",
@@ -650,13 +677,6 @@
       ]
     },
     {
-      "into": "Rnftechnologies",
-      "name": "RnF Technologies",
-      "from": [
-        "Rnf"
-      ]
-    },
-    {
       "into": "Salesforce",
       "from": [
         "Salesfroce",
@@ -684,8 +704,7 @@
     {
       "into": "ServiceNow",
       "from": [
-        "Service Now",
-        "Servicenow Ind"
+        "Service Now"
       ]
     },
     {
@@ -822,8 +841,7 @@
     {
       "into": "UST",
       "from": [
-        "UST Global",
-        "UST (e3)"
+        "UST Global"
       ]
     },
     {
@@ -884,12 +902,6 @@
       "name": "YourFriendlyHR",
       "from": [
         "Yourfriendlyhr Pyjamahr"
-      ]
-    },
-    {
-      "into": "Zepto",
-      "from": [
-        "Zeptoapp"
       ]
     },
     {
@@ -1024,7 +1036,6 @@
         "Infoseek Jp",
         "I Softbank Jp",
         "Rana Simplelogin",
-        "Titan Email",
         "Att",
         "Comcast",
         "Sbcglobal",
@@ -1034,14 +1045,14 @@
     }
   ],
   "renames": {
-    "CMS": "CMS Info Systems",
+    "CMS": "CMS Computers",
     "IVP": "Institutional Venture Partners (IVP)",
-    "Ivpindia": "Indus Valley Partners",
+    "Ivpindia": "IVP Limited",
     "Iris": "IRIS Software Group",
     "Deshawresearch": "D. E. Shaw Research",
     "Smit Smu": "Sikkim Manipal Institute of Technology",
     "Mm Smu": "Singapore Management University",
-    "Deltax La": "DeltaX",
+    "Deltax La": "DeltaX (AI logistics)",
     "Ap Jll": "JLL",
     "Us Hjheinz": "Kraft Heinz",
     "In Tiaa": "TIAA",
@@ -1088,7 +1099,8 @@
     "Arisinfra One": "Arisinfra",
     "Nurture Farm": "Nurture.farm",
     "In Experis": "Experis",
-    "Elastic Run": "ElasticRun"
+    "Elastic Run": "ElasticRun",
+    "CSG Systems": "CSG Services"
   },
   "distinct_companies": [
     [
@@ -1110,6 +1122,21 @@
       "Yahoo (Personal Email)",
       "Yahoo",
       "personal Yahoo mailboxes vs Yahoo the employer"
+    ],
+    [
+      "UST",
+      "UST (e3)",
+      "UST (ust.com, IT services) and UST (uste3.com, logistics) are unrelated"
+    ],
+    [
+      "CSG Services",
+      "CSG International",
+      "csgservices.com and csgi.com are different companies"
+    ],
+    [
+      "Heizen",
+      "Heizen (formerly OpenGig)",
+      "heizen.io (Brazilian retailer) vs heizen.work (Indian software firm)"
     ]
   ],
   "unresolved": {
@@ -1120,7 +1147,12 @@
     "app.link": "Branch.io's deep-link domain, not a mailbox domain; left as filed",
     "oyo.studio": "Possibly OYO (oyorooms.com), unconfirmed; left as a separate company",
     "postman-ks.com": "Not Postman (postman.com); owner unconfirmed; left as filed",
-    "ionitd.com": "Not ION Group's iongroup.com / iontrading.com; owner unconfirmed; left as filed"
+    "ionitd.com": "Not ION Group's iongroup.com / iontrading.com; owner unconfirmed; left as filed",
+    "heizen.io": "Belongs to a Brazilian retailer named Heizen; the one contact has an Indian name — owner unconfirmed, left as filed",
+    "rnf.tech": "Not confirmed as RNF Technologies; kept as its own company",
+    "servicenow.ind.in": "Not confirmed as ServiceNow; kept as its own company",
+    "zeptoapp.com": "A push-notification app (Zepto), not the quick-commerce Zepto; kept as its own company",
+    "sify.com": "Sify is an IT company that also ran a free-mail service; this address is ambiguous, kept as work"
   },
   "_ids": {
     "_about": "companies.id of every name above, pinned from the 2026-09-24 snapshot. Rules resolve through these ids, so a later rename (\"Yahoo Inc\" -> \"Yahoo\") can't redirect a rule meant for another row (the old \"Yahoo\" pseudo-company). New rules may omit their ids.",
@@ -1535,5 +1567,10 @@
     "Zoom Video Communications": "5bfc0934-fe1e-43c7-a979-39048da93dc0",
     "iCloud (Personal Email)": "9e1590b4-f050-4842-9ae1-530950b8f5a6",
     "iRAGE Capital": "30be9ce1-4d0f-479c-8b8c-617c0ef33859"
+  },
+  "personal_contacts": {
+    "action": "delete",
+    "why": "Owner's instruction (2026-09-25): personal addresses (gmail, yahoo, outlook…) aren't wanted in the catalog.",
+    "keep_if_sent": "A contact with send history is held for an explicit decision: deleting it cascades to its mail_sends, and the send record is what prevents a duplicate cold mail if it's re-imported."
   }
 }

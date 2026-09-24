@@ -84,7 +84,16 @@ struct SelectionBulkAction {
     let action: () -> Void
 }
 
+/// Whether a list is in selection mode right now, for chrome that lives above
+/// the screens. `RootView` reads it to put the send queue's shelf away: with the
+/// tab bar gone, the shelf drops into its place and covers the selection toolbar.
+@Observable
+final class SelectionChrome {
+    var isSelecting = false
+}
+
 private struct SelectionActions<ID: Hashable>: ViewModifier {
+    @Environment(SelectionChrome.self) private var chrome: SelectionChrome?
     let selection: ListSelection<ID>
     let all: [ID]
     let noun: SelectionNoun
@@ -123,8 +132,16 @@ private struct SelectionActions<ID: Hashable>: ViewModifier {
             // Selection mode owns the bottom edge, as it does in Photos: the tab
             // bar leaves and the toolbar that acts on the selection arrives in
             // its place, instead of a second bar stacked on top of it.
-            .toolbar(isSelecting ? .hidden : .visible, for: .tabBar)
+            //
+            // `.automatic`, not `.visible`, when not selecting: a list's
+            // `.visible` outranks the `.hidden` of a screen pushed on top of it,
+            // so a company opened from Home or Companies kept its tab bar over
+            // the selection toolbar.
+            .toolbar(isSelecting ? .hidden : .automatic, for: .tabBar)
             .navigationBarBackButtonHidden(isSelecting)
+            .onChange(of: isSelecting) { _, selecting in chrome?.isSelecting = selecting }
+            // A screen that leaves mid-selection mustn't keep the shelf away.
+            .onDisappear { if isSelecting { chrome?.isSelecting = false } }
             .toolbar {
                 if isSelecting {
                     navigationItems

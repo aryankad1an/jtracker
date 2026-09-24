@@ -139,35 +139,25 @@ struct JobDetailView: View {
         .navigationTitle(job?.company ?? "Company")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search contacts")
-        .toolbar {
-            if !selection.isSelecting {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            editingCompany = job
-                        } label: {
-                            Label("Edit Company", systemImage: "pencil")
-                        }
-                        Button {
-                            withAnimation(Theme.Motion.liquid) { isContactsExpanded = true }
-                            isAdding = true
-                        } label: {
-                            Label("Add Contact", systemImage: "plus")
-                        }
-                        if let job, !job.contacts.isEmpty {
-                            Button {
-                                withAnimation(Theme.Motion.liquid) { isContactsExpanded = true }
-                                selection.enter()
-                            } label: {
-                                Label("Select Contacts", systemImage: "checkmark.circle")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .accessibilityLabel("More actions")
-                }
+        .topBarActions(
+            TopBarPrimary(title: "Add Contact", systemImage: "plus") {
+                withAnimation(Theme.Motion.liquid) { isContactsExpanded = true }
+                isAdding = true
+            },
+            isHidden: selection.isSelecting || job == nil
+        ) {
+            Button {
+                editingCompany = job
+            } label: {
+                Label("Edit Company", systemImage: "pencil")
             }
+            Button {
+                withAnimation(Theme.Motion.liquid) { isContactsExpanded = true }
+                selection.enter()
+            } label: {
+                Label("Select", systemImage: "checkmark.circle")
+            }
+            .disabled(job?.contacts.isEmpty ?? true)
         }
         .selectionActions(
             selection,

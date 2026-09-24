@@ -101,24 +101,17 @@ struct HomeView: View {
                 JobDetailView(jobID: companyID)
                     .navigationTransition(.zoom(sourceID: companyID, in: zoom))
             }
-            .toolbar {
-                if !selection.isSelecting {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Button { isAddingContact = true } label: {
-                                Label("Add Contact", systemImage: "person.crop.circle.badge.plus")
-                            }
-                            if !jobStore.jobs.isEmpty {
-                                Button { selection.enter() } label: {
-                                    Label("Select", systemImage: "checkmark.circle")
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                        }
-                        .accessibilityLabel("More actions")
-                    }
+            .topBarActions(
+                TopBarPrimary(title: "Add Contact", systemImage: "plus") { isAddingContact = true },
+                isHidden: selection.isSelecting
+            ) {
+                Button { showingQuickActions = true } label: {
+                    Label("Quick Actions", systemImage: "bolt")
                 }
+                Button { selection.enter() } label: {
+                    Label("Select", systemImage: "checkmark.circle")
+                }
+                .disabled(jobStore.jobs.isEmpty)
             }
             .selectionActions(
                 selection,

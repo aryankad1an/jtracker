@@ -18,7 +18,7 @@ PERSONAL = {
     "hotmail.co.uk", "hotmail.co.in", "outlook.in", "live.in", "aol.in",
     "india.com", "in.com", "asia.com", "inbox.com", "email.com", "writeme.com",
     "usa.net", "web.de", "infoseek.jp", "i.softbank.jp", "simplelogin.com",
-    "titan.email", "comcast.net", "att.net", "sbcglobal.net", "bellatlantic.net",
+    "comcast.net", "att.net", "sbcglobal.net", "bellatlantic.net",
     "insightbb.com", "rediff.com",
     "gmaill.com",  # a typo of gmail.com, but its owner is just as unknown
 }
@@ -26,7 +26,7 @@ PERSONAL = {
 # Two-label public suffixes seen in (or plausible for) the data. A registrable
 # domain is one label plus its public suffix.
 MULTI_SUFFIXES = {
-    *(f"{s}.in" for s in ("co", "ac", "org", "net", "gov", "edu", "ind", "res", "nic", "gen", "firm")),
+    *(f"{s}.in" for s in ("co", "ac", "org", "net", "gov", "edu", "ind", "res", "nic", "gen", "firm", "ernet")),
     *(f"{s}.uk" for s in ("co", "org", "ac", "gov", "ltd", "plc", "me")),
     *(f"com.{c}" for c in ("au", "br", "mx", "qa", "sg", "hk", "ar", "cn", "my", "tr", "sa",
                            "eg", "ph", "pk", "tw", "vn", "ng", "co", "pe", "bd", "np", "lk")),

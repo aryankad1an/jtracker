@@ -33,6 +33,23 @@ struct ActivityView: View {
             .navigationTitle("Activity")
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $searchText, prompt: "Search people, companies, subjects")
+            // Asking Gmail is what this screen is for; the glyph turns for as
+            // long as the check runs, however it was started.
+            .topBarActions(
+                TopBarPrimary(title: "Check for Replies", systemImage: "arrow.clockwise",
+                              isBusy: replySync.isSyncing) {
+                    Task { await checkForReplies() }
+                }
+            ) {
+                Picker(selection: $lane.animation(Theme.Motion.bouncy)) {
+                    Label("All", systemImage: "tray.full").tag(Lane.all)
+                    Label("Replied", systemImage: "arrowshape.turn.up.left").tag(Lane.replied)
+                    Label("Waiting", systemImage: "clock").tag(Lane.waiting)
+                } label: {
+                    Label("Show", systemImage: "line.3.horizontal.decrease")
+                }
+                .pickerStyle(.inline)
+            }
             .sheet(item: $summaryItem) { item in
                 MailSummaryView(contact: item.contact, company: item.company)
             }

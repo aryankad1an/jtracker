@@ -58,23 +58,16 @@ struct TemplatesView: View {
             .navigationTitle("Templates")
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $searchText, prompt: "Search templates")
-            .toolbar {
-                if !selection.isSelecting {
-                    // A word, not a glyph, as in Photos and Files.
-                    ToolbarItem(placement: .topBarTrailing) {
-                        if !store.templates.isEmpty {
-                            Button("Select") { selection.enter() }
-                        }
-                    }
-                    // Writing a template is what this screen is for, so it's a
-                    // button in the bar rather than an item in a menu.
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { isAdding = true } label: {
-                            Image(systemName: "plus")
-                        }
-                        .accessibilityLabel("New template")
-                    }
+            // Writing a template is what this screen is for, so it's the bar's
+            // verb rather than an item in the menu.
+            .topBarActions(
+                TopBarPrimary(title: "New Template", systemImage: "plus") { isAdding = true },
+                isHidden: selection.isSelecting
+            ) {
+                Button { selection.enter() } label: {
+                    Label("Select", systemImage: "checkmark.circle")
                 }
+                .disabled(store.templates.isEmpty)
             }
             .selectionActions(
                 selection,

@@ -16,6 +16,7 @@ struct RootView: View {
     @State private var gmailAuth = GmailAuthStore()
     @State private var mailQueue = MailQueue()
     @State private var replySync = ReplySync()
+    @State private var selectionChrome = SelectionChrome()
     @State private var selectedTab: Tab = .home
     @Environment(\.scenePhase) private var scenePhase
 
@@ -69,6 +70,7 @@ struct RootView: View {
         .environment(gmailAuth)
         .environment(mailQueue)
         .environment(replySync)
+        .environment(selectionChrome)
         // Block interaction and show a loading state while a change is being
         // written to the database and reloaded, so the two never drift.
         .overlay {
@@ -224,26 +226,20 @@ struct RootView: View {
         }
     }
 
-    /// The accessory shelf is applied only while the queue has something to say.
-    /// An `if` *inside* `tabViewBottomAccessory` doesn't work: the modifier still
-    /// reserves the shelf and draws an empty capsule above the tab bar. Applying
-    /// the modifier conditionally restructures the TabView, which is why the
-    /// selection is bound — without it, a send starting would knock the user back
-    /// to the first tab.
-    @ViewBuilder
+    /// The send queue's shelf above the tab bar, shown only while the queue has
+    /// something to say. It steps aside while a list is selecting: the tab bar
+    /// leaves then, and the shelf would drop into its place on top of the
+    /// selection toolbar's Send and Delete.
     private var tabs: some View {
-        Group {
-            if mailQueue.isActive {
-                tabStack.tabViewBottomAccessory { SendQueueBar() }
-            } else {
-                tabStack
+        tabStack
+            .tabViewBottomAccessory(isEnabled: mailQueue.isActive && !selectionChrome.isSelecting) {
+                SendQueueBar()
             }
-        }
-        // The shelf appearing pushes the tab bar up — a real object arriving on
-        // screen, and the one event here the user didn't just tap for.
-        .sensoryFeedback(trigger: mailQueue.isActive) { _, active in
-            active ? .impact(weight: .medium, intensity: 0.6) : nil
-        }
+            // The shelf appearing pushes the tab bar up — a real object arriving on
+            // screen, and the one event here the user didn't just tap for.
+            .sensoryFeedback(trigger: mailQueue.isActive) { _, active in
+                active ? .impact(weight: .medium, intensity: 0.6) : nil
+            }
     }
 
     private var tabStack: some View {

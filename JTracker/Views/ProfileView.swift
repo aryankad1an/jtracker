@@ -23,36 +23,31 @@ struct ProfileView: View {
             }
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        Haptics.tap()
-                        withAnimation(Theme.Motion.bouncy) {
-                            if isEditing {
-                                isEditing = false            // cancel, discard the draft
-                            } else {
-                                draft = store.profile         // start from the current profile
-                                isEditing = true
-                            }
+            // The pencil is the bar's verb, and in edit mode the same slot is
+            // Save — the ✎ morphs into the ✓ where the thumb already is, and a ✕
+            // arrives on the leading edge to back out.
+            .topBarActions(
+                isEditing
+                    ? TopBarPrimary(title: "Save", systemImage: "checkmark",
+                                    isProminent: true, isBusy: store.isSaving) { save() }
+                    : TopBarPrimary(title: "Edit Profile", systemImage: "pencil") {
+                        withAnimation(Theme.Motion.liquid) {
+                            draft = store.profile         // start from the current profile
+                            isEditing = true
                         }
-                    } label: {
-                        Image(systemName: isEditing ? "xmark" : "pencil")
-                            // The pencil and the cross are the same slot, so the
-                            // swap between them bounces rather than cross-fading.
-                            .contentTransition(.symbolEffect(.replace))
+                    },
+                // Cancel discards the draft — but not one already being written.
+                onCancel: isEditing ? { if !store.isSaving { isEditing = false } } : nil
+            ) {
+                if replySync.needsReconnect {
+                    Button { reconnect() } label: {
+                        Label("Reconnect Gmail", systemImage: "arrow.trianglehead.clockwise")
                     }
-                    .accessibilityLabel(isEditing ? "Cancel editing" : "Edit profile")
-                    .disabled(store.isSaving)
+                    .disabled(isReconnecting)
+                    Divider()
                 }
-                // Save sits on the trailing edge, matching every other editable
-                // screen in the app and the platform convention.
-                if isEditing {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button { save() } label: {
-                            if store.isSaving { ProgressView() } else { Text("Save").fontWeight(.semibold) }
-                        }
-                        .disabled(store.isSaving)
-                    }
+                Button(role: .destructive) { signOut() } label: {
+                    Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
             }
         }
@@ -76,14 +71,7 @@ struct ProfileView: View {
                         .foregroundStyle(.statusInvalid)
                 }
 
-                Button {
-                    Haptics.press()
-                    isReconnecting = true
-                    Task {
-                        await gmail.connect()
-                        isReconnecting = false
-                    }
-                } label: {
+                Button { reconnect() } label: {
                     if isReconnecting {
                         ProgressView()
                     } else {
@@ -120,6 +108,15 @@ struct ProfileView: View {
                 Haptics.failure()
                 store.profile = previous
             }
+        }
+    }
+
+    private func reconnect() {
+        Haptics.press()
+        isReconnecting = true
+        Task {
+            await gmail.connect()
+            isReconnecting = false
         }
     }
 

@@ -99,11 +99,10 @@ struct CompaniesView: View {
             .searchable(text: $searchText, prompt: "Search companies, sectors, people")
             // Cancelled and restarted per keystroke, which is what debounces it.
             .task(id: query) { await jobStore.searchCompanies(query: query) }
-            .toolbar {
-                if !selection.isSelecting {
-                    ToolbarItem(placement: .topBarTrailing) { menu }
-                }
-            }
+            .topBarActions(
+                TopBarPrimary(title: "Add Company", systemImage: "plus") { isAdding = true },
+                isHidden: selection.isSelecting
+            ) { menu }
             .selectionActions(
                 selection,
                 all: rows.map(\.id),
@@ -143,27 +142,20 @@ struct CompaniesView: View {
         }
     }
 
+    /// Adding a company is the bar's own `+`; the menu has the rest.
+    @ViewBuilder
     private var menu: some View {
-        Menu {
-            Button { isAddingContact = true } label: {
-                Label("Add Contact", systemImage: "person.crop.circle.badge.plus")
-            }
-            Button { isAdding = true } label: {
-                Label("Add Company", systemImage: "plus")
-            }
-            if !jobStore.allCompanies.isEmpty {
-                Button { selection.enter() } label: {
-                    Label("Select", systemImage: "checkmark.circle")
-                }
-            }
-            Divider()
-            Toggle(isOn: $showEmpty) {
-                Label("Show empty companies", systemImage: "tray")
-            }
-        } label: {
-            Image(systemName: "ellipsis")
+        Button { isAddingContact = true } label: {
+            Label("Add Contact", systemImage: "person.crop.circle.badge.plus")
         }
-        .accessibilityLabel("More actions")
+        Button { selection.enter() } label: {
+            Label("Select", systemImage: "checkmark.circle")
+        }
+        .disabled(jobStore.allCompanies.isEmpty)
+        Divider()
+        Toggle(isOn: $showEmpty) {
+            Label("Show empty companies", systemImage: "tray")
+        }
     }
 
     /// The row whose appearance fetches the next page: ten from the end.

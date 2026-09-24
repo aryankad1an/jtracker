@@ -14,7 +14,13 @@ python3 verify_companies.py                # dry run: plan + simulated result
 python3 verify_companies.py --apply        # back up, apply, re-verify
 python3 verify_names.py                    # dry run of the name pass
 python3 verify_names.py --apply            # back up, apply, re-check
+python3 audit.py ../../db_backups/<original>  # independent check vs a backup
+python3 -m unittest -v test_pipeline       # the rules, pinned to cases
 ```
+
+**Before `--apply`, always:** read the dry run's `report.md` (plan, moved
+contacts, deletions), then run `audit.py` against the oldest backup. The
+pipeline refuses to apply a plan whose simulated result has any violation.
 
 `--snapshot <db_backups/…>` runs either dry run against a backup instead of the
 live DB.
@@ -55,6 +61,42 @@ recruiting agency's domain on a client company, and typo domains. Mail hosts
 like `ext.airbnb.com` stay — the app looks a company up by exact host. Run it
 in the Supabase SQL editor; it's empty (just `begin; commit;`) when there's
 nothing to fix.
+
+### Personal mailboxes
+
+`decisions.json` → `personal_contacts: delete` (the account owner's call,
+2026-09-25): gmail/yahoo/outlook/… contacts are removed from the catalog. A
+personal contact **with send history is held, never deleted** — deleting it
+would cascade to its `mail_sends`, and that record is what stops a duplicate
+cold mail if it's re-imported. The held ones are listed in the report.
+"Personal" is the verified list in `domains.py`; a provider's *own* staff
+domain (`titan.email`) or a company that also ran free mail (`sify.com`) is
+not on it.
+
+### Judgement calls need evidence
+
+Merging two *different* domains is a claim that one employer owns both. A
+second verification pass (2026-09-25) checked every such claim against the
+web and found 12 of ~250 wrong or unsupported — e.g. `uste3.com` is a
+logistics firm, not UST; `meta.com.br` is a Brazilian IT firm, not Meta;
+`cms.co.in` is CMS Computers, not CMS Info Systems. Those rows were restored
+with their original ids. Put the evidence in the rule's `"why"`, and when it
+can't be found, leave the domain as its own company and list it under
+`unresolved`.
+
+Rules resolve companies through the ids pinned in `_ids`, never by name alone:
+after renames a name can belong to a different row (the "Yahoo" and
+"Indus Valley Partners" cases in `test_pipeline.py`).
+
+## Independent audit (`audit.py`)
+
+Compares an original backup with the live DB (or another backup) row by row
+and checks every difference against the rules, without reusing the pipeline's
+planning code: no contact invented or lost except junk and send-less personal
+mailboxes, every move explained by a rule or by domain evidence, every deleted
+company either junk or fully absorbed by one other, every send intact, every
+tracked company still tracked (or its successor), and every changed name read
+off the address.
 
 ## Name pass (`verify_names.py`)
 

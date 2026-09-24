@@ -141,7 +141,14 @@ def build_plan(st):
 
     # Explicit merges and renames.
     for m in d["merges"]:
-        into = st.resolve(m["into"])
+        into = st.resolve(m["into"], required=False)
+        if into is None:
+            # Target gone too (e.g. a personal group removed by a later rule):
+            # the merge is history. A source still present would be stranded.
+            live = [s for s in m["from"] if st.resolve(s, required=False)]
+            if live:
+                raise SystemExit(f"decisions.json: merge target {m['into']!r} is gone but {live} still exist")
+            continue
         for src in m["from"]:
             sid = st.resolve(src, required=False)
             if sid is None or sid == into:  # already merged away on an earlier run
@@ -163,10 +170,17 @@ def build_plan(st):
     move_targets = {}  # host or registrable domain -> company id (or placeholder)
     for dom, rule in d["domain_moves"].items():
         if "create" in rule:
-            existing = st.resolve(rule["create"], required=False)
+            # A row being restored keeps its original id, so it's found by id
+            # once it exists again; a brand-new one is found by name.
+            # A name match that's a pinned row belongs to another rule (it may
+            # still carry this name until its own rename runs): never reuse it.
+            by_name = st.by_name.get(rule["create"])
+            if by_name in PINNED.values():
+                by_name = None
+            existing = rule["id"] if rule.get("id") in st.companies else by_name
             key = existing or f"new:{rule['create']}"
             if not existing:
-                creates[key] = rule["create"]
+                creates[key] = {"name": rule["create"], "id": rule.get("id")}
             move_targets[dom] = key
         else:
             move_targets[dom] = st.resolve(rule["to"])
@@ -207,13 +221,23 @@ def build_plan(st):
         owner[dom] = ranked[0][0]
         contested.append((dom, [(st.companies[k]["name"], n) for k, n in ranked]))
 
+    # Personal-mailbox contacts: deleted when the rules say so. One with send
+    # history is held instead — deleting it would cascade to its mail_sends.
+    delete_personal, held_personal = [], []
+    if d.get("personal_contacts", {}).get("action") == "delete":
+        for r in st.recruiters:
+            dom = contact_domain(r)
+            if dom and is_personal(dom) and r["company_id"] not in test_ids | junk_ids:
+                (held_personal if st.sends[r["id"]] else delete_personal).append(r)
+    deleting = {r["id"] for r in delete_personal}
+
     # Each contact's destination.
     moves = collections.defaultdict(list)      # target id -> [recruiter]
     invalidate = []
     stray = []                                 # moves not implied by a company merge
     for r in st.recruiters:
         cid = r["company_id"]
-        if cid in test_ids or cid in junk_ids:
+        if cid in test_ids or cid in junk_ids or r["id"] in deleting:
             continue
         dom = contact_domain(r)
         target = root(cid)
@@ -265,10 +289,10 @@ def build_plan(st):
             seen.add(folded[cid])
             folded[cid] = folded[folded[cid]]
     # Contacts of a folded company must follow it even when not moved above.
+    moved_ids = {r["id"] for rs in moves.values() for r in rs}
     for cid, tgt in folded.items():
-        moved_ids = {r["id"] for rs in moves.values() for r in rs}
         for r in st.by_company[cid]:
-            if r["id"] not in moved_ids:
+            if r["id"] not in moved_ids and r["id"] not in deleting:
                 moves[tgt].append(r)
     # Normalise move targets through the fold map.
     norm_moves = collections.defaultdict(list)
@@ -303,6 +327,18 @@ def build_plan(st):
         if not st.companies[tgt].get("sector") and tgt not in sector_ops:
             sector_ops[tgt] = src
 
+    # "(Personal Email)" groups the deletion leaves empty go too — unless
+    # tracked, or still holding a contact kept for its send history.
+    emptied = []
+    moving_out = collections.Counter(r["company_id"] for rs in moves.values() for r in rs)
+    moving_in = {folded.get(t, t) for t in moves}
+    for cid, c in st.companies.items():
+        if "(Personal Email)" not in c["name"] or cid in folded or cid in moving_in:
+            continue
+        left = [r for r in st.by_company[cid] if r["id"] not in deleting]
+        if len(left) == moving_out[cid] and not st.tracked[cid]:
+            emptied.append(cid)
+
     # Junk: delete their contacts, then the company. Never if mail was sent.
     junk = []
     for cid in junk_ids:
@@ -320,6 +356,9 @@ def build_plan(st):
         "delete_companies": sorted(folded),
         "fold_into": folded,
         "delete_junk": junk,
+        "delete_personal": [r["id"] for r in delete_personal],
+        "held_personal": [r["id"] for r in held_personal],
+        "delete_emptied": sorted(emptied),
         "renames": rename_ops,
         "sectors": sector_ops,
         "why": why,
@@ -327,6 +366,49 @@ def build_plan(st):
         "_contested": contested,
         "notes": notes,
     }
+
+
+def is_agency_itself(company_name, host):
+    """Talentiser listing talentiser.com is its own domain, not a relay."""
+    return brand(host).replace("-", "") in re.sub(r"[^a-z0-9]", "", company_name.lower())
+
+
+def domain_ops(st):
+    """companies.domains changes that keep the column true to the contacts.
+
+    The app looks a company up by exact mail host (`domains cs.{host}`), so a
+    company lists every work host its contacts use (ext.airbnb.com included).
+    Removed: personal, typo and relay hosts (relay kept on the agency itself),
+    and a host that now belongs only to another company's contacts. Kept: a
+    host nobody's contacts use — someone typed it in the company form.
+    Returns {} when the column doesn't exist yet.
+    """
+    if not any("domains" in c for c in st.companies.values()):
+        return {}
+    d = DECISIONS
+    relay, typo = set(d["relay_domains"]), set(d["typo_domains"])
+    test_ids = {st.resolve(n, required=False) for n in d["test_companies"]} - {None}
+    held = collections.defaultdict(set)  # host -> companies whose contacts use it
+    for r in st.recruiters:
+        h = contact_domain(r)
+        if h:
+            held[h].add(r["company_id"])
+    ops = {}
+    for cid, c in st.companies.items():
+        if cid in test_ids:
+            continue
+        have = list(c.get("domains") or [])
+        def allowed(h):
+            if is_personal(h) or h in typo:
+                return False
+            return registrable(h) not in relay or is_agency_itself(c["name"], h)
+        mine = {contact_domain(r) for r in st.by_company[cid]} - {None}
+        work = {h for h in mine if allowed(h)}
+        keep = [h for h in have if allowed(h) and not (held.get(h, set()) - {cid} and h not in mine)]
+        want = keep + sorted(work - set(keep))
+        if want != have:
+            ops[cid] = want
+    return ops
 
 
 def name_of(st, cid, final_name=None, renames=None, creates=None):
@@ -377,6 +459,51 @@ def verify(st):
         dom = contact_domain(r)
         if dom in d["typo_domains"] and r.get("is_valid", True):
             violations.append(f"contact {r['email']} has a typo domain but is still marked valid")
+
+    # Every explicit domain rule actually landed on its target company.
+    for host_rule, rule in d["domain_moves"].items():
+        if "create" in rule:
+            want, names = (rule["id"] if rule.get("id") in st.companies else None), {rule["create"]}
+        else:
+            want, names = st.resolve(rule["to"], required=False), set()
+        for r in st.recruiters:
+            h = contact_domain(r)
+            if h == host_rule or (h and registrable(h) == host_rule):
+                cid = r["company_id"]
+                if cid != want and st.companies[cid]["name"] not in names:
+                    violations.append(f"{r['email']} is under {st.companies[cid]['name']!r}, "
+                                      f"but the rule for {host_rule} says {rule.get('create') or rule.get('to')!r}")
+
+    if d.get("personal_contacts", {}).get("action") == "delete":
+        for r in st.recruiters:
+            dom = contact_domain(r)
+            if dom and is_personal(dom) and r["company_id"] not in test_ids:
+                if st.sends[r["id"]]:
+                    warnings.append(f"personal contact {r['email']} kept: it has {st.sends[r['id']]} send(s)")
+                else:
+                    violations.append(f"personal contact {r['email']} should have been deleted")
+
+    if any("domains" in c for c in st.companies.values()):
+        listed = collections.defaultdict(list)
+        for cid, c in st.companies.items():
+            for h in c.get("domains") or []:
+                listed[h].append(c["name"])
+                if is_personal(h):
+                    violations.append(f"{c['name']!r} lists personal domain {h}")
+                elif h in d["typo_domains"]:
+                    violations.append(f"{c['name']!r} lists typo domain {h}")
+                elif registrable(h) in relay and not is_agency_itself(c["name"], h):
+                    violations.append(f"{c['name']!r} lists recruiting-agency domain {h}")
+        for h, names in listed.items():
+            if len(names) > 1:
+                violations.append(f"domain {h} is listed on several companies: {names}")
+        for r in st.recruiters:
+            h = contact_domain(r)
+            c = st.companies.get(r["company_id"])
+            if (h and c and r["company_id"] not in test_ids and not is_personal(h)
+                    and h not in d["typo_domains"] and registrable(h) not in relay
+                    and h not in (c.get("domains") or [])):
+                violations.append(f"{c['name']!r} doesn't list {h}, which its contact {r['email']} uses")
 
     for n in d["junk_companies"]:
         cid = st.resolve(n, required=False)
@@ -489,9 +616,13 @@ def write_outputs(out, st, plan=None, violations=(), warnings=(), label=""):
 
 
 def plan_summary(st, plan):
-    nm = lambda cid: name_of(st, cid, plan["renames"], {}, plan["creates"])
+    nm = lambda cid: plan["creates"][cid]["name"] if cid in plan["creates"] else name_of(st, cid, plan["renames"], {}, {})
     lines = ["## Plan", ""]
-    lines.append(f"- create companies: {list(plan['creates'].values())}")
+    lines.append(f"- create companies: {[c['name'] for c in plan['creates'].values()]}")
+    lines.append(f"- personal-mailbox contacts deleted: {len(plan.get('delete_personal', []))}; "
+                 f"held because mail was sent: {len(plan.get('held_personal', []))}")
+    lines.append(f"- emptied personal groups deleted: {len(plan.get('delete_emptied', []))}")
+    lines.append(f"- companies whose domains change: {len(plan.get('domains', {}))}")
     lines.append(f"- contacts moved: {sum(len(v) for v in plan['moves'].values())}")
     lines.append(f"- contacts marked invalid (typo domains): {len(plan['invalidate'])}")
     lines.append(f"- companies folded into another: {len(plan['delete_companies'])}")
@@ -518,6 +649,17 @@ def plan_summary(st, plan):
     for t in plan["tracking"]:
         lines.append(f"- {t['table']} {t['user_email']}: {st.companies[t['from']]['name']} → {nm(t['to'])}"
                      + ("" if t["insert"] else " (already tracked there)"))
+    lines += ["", "### Personal contacts held (they have send history)", ""]
+    rmap = {r["id"]: r for r in st.recruiters}
+    for rid in plan.get("held_personal", []):
+        r = rmap[rid]
+        lines.append(f"- {r['email']} ({st.companies[r['company_id']]['name']}, {st.sends[rid]} send(s))")
+    lines += ["", "### Emptied personal groups deleted", ""]
+    lines += [f"- {st.companies[c]['name']}" for c in plan.get("delete_emptied", [])]
+    lines += ["", "### Domain list changes", ""]
+    for cid, doms in sorted(plan.get("domains", {}).items(), key=lambda kv: nm(kv[0]).lower()):
+        old = [] if cid.startswith("new:") else (st.companies[cid].get("domains") or [])
+        lines.append(f"- {nm(cid)}: -{sorted(set(old) - set(doms))} +{sorted(set(doms) - set(old))}")
     for n in plan["notes"]:
         lines.append(f"- NOTE: {n}")
     return lines + [""]
@@ -533,10 +675,11 @@ def chunks(xs, n=100):
 
 def apply(st, plan):
     ids = dict()  # placeholder -> real id
-    for key, name in plan["creates"].items():
-        row = supabase.write("POST", "companies", body={"name": name})[0]
+    for key, spec in plan["creates"].items():
+        body = {"name": spec["name"], **({"id": spec["id"]} if spec.get("id") else {})}
+        row = supabase.write("POST", "companies", body=body)[0]
         ids[key] = row["id"]
-        print(f"  created {name} -> {row['id']}")
+        print(f"  created {spec['name']} -> {row['id']}" + (" (original id restored)" if spec.get("id") else ""))
     real = lambda cid: ids.get(cid, cid)
 
     for tgt, rids in plan["moves"].items():
@@ -560,16 +703,27 @@ def apply(st, plan):
                                               "company_id": f"eq.{t['from']}"}, prefer="return=minimal")
     print(f"  moved {len(plan['tracking'])} tracked rows")
 
+    # Personal contacts: deleting one cascades to its sends, so re-check at
+    # delete time that none has any (the plan already held those that did).
+    for part in chunks(plan.get("delete_personal", [])):
+        sent = supabase.get("mail_sends", {"recruiter_id": supabase.in_filter(part)}, select="id")
+        if sent:
+            raise SystemExit(f"refusing to delete personal contacts: {len(sent)} sends appeared since planning")
+        supabase.write("DELETE", "recruiters", {"id": supabase.in_filter(part)}, prefer="return=minimal")
+    print(f"  deleted {len(plan.get('delete_personal', []))} personal-mailbox contacts")
+
     # Deleting a company cascades to its contacts and their sends: refuse
     # unless the DB confirms it's empty and untracked right now.
-    for cid in plan["delete_companies"]:
+    for cid in plan["delete_companies"] + plan.get("delete_emptied", []):
         left = supabase.get("recruiters", {"company_id": f"eq.{cid}"}, select="id")
-        tracked = supabase.get("tracked_companies", {"company_id": f"eq.{cid}"}, select="user_email")
+        tracked = (supabase.get("tracked_companies", {"company_id": f"eq.{cid}"}, select="user_email")
+                   + supabase.get("user_companies", {"company_id": f"eq.{cid}"}, select="user_email"))
         if left or tracked:
             raise SystemExit(f"refusing to delete {st.companies[cid]['name']}: "
                              f"{len(left)} contacts, {len(tracked)} tracked rows remain")
         supabase.write("DELETE", "companies", {"id": f"eq.{cid}"}, prefer="return=minimal")
-    print(f"  deleted {len(plan['delete_companies'])} folded companies")
+    print(f"  deleted {len(plan['delete_companies'])} folded companies, "
+          f"{len(plan.get('delete_emptied', []))} emptied personal groups")
 
     for cid in plan["delete_junk"]:
         rids = [r["id"] for r in st.by_company[cid]]
@@ -591,18 +745,23 @@ def apply(st, plan):
         supabase.write("PATCH", "companies", {"id": f"eq.{real(cid)}"}, {"sector": sector},
                        prefer="return=minimal")
     print(f"  filled {len(plan['sectors'])} sectors")
+    for cid, doms in plan.get("domains", {}).items():
+        supabase.write("PATCH", "companies", {"id": f"eq.{real(cid)}"}, {"domains": doms},
+                       prefer="return=minimal")
+    print(f"  updated domains on {len(plan.get('domains', {}))} companies")
 
 
 def simulate(st, plan):
     """The tables as they'd be after `apply`, computed locally (dry runs)."""
     import copy
     t = copy.deepcopy(st.tables)
-    for key, name in plan["creates"].items():
-        t["companies"].append({"id": key, "name": name, "sector": None})
+    for key, spec in plan["creates"].items():
+        t["companies"].append({"id": key, "name": spec["name"], "sector": None, "domains": []})
     dest = {rid: tgt for tgt, rids in plan["moves"].items() for rid in rids}
     bad = set(plan["invalidate"])
     junk = set(plan["delete_junk"])
-    t["recruiters"] = [r for r in t["recruiters"] if r["company_id"] not in junk]
+    gone_contacts = set(plan.get("delete_personal", []))
+    t["recruiters"] = [r for r in t["recruiters"] if r["company_id"] not in junk and r["id"] not in gone_contacts]
     for r in t["recruiters"]:
         r["company_id"] = dest.get(r["id"], r["company_id"])
         if r["id"] in bad:
@@ -612,11 +771,13 @@ def simulate(st, plan):
         rows[:] = [x for x in rows if not (x["user_email"] == mv["user_email"] and x["company_id"] == mv["from"])]
         if mv["insert"]:
             rows.append({"user_email": mv["user_email"], "company_id": mv["to"]})
-    gone = set(plan["delete_companies"]) | junk
+    gone = set(plan["delete_companies"]) | junk | set(plan.get("delete_emptied", []))
     t["companies"] = [c for c in t["companies"] if c["id"] not in gone]
     for c in t["companies"]:
         c["name"] = plan["renames"].get(c["id"], c["name"])
         c["sector"] = plan["sectors"].get(c["id"], c["sector"])
+        if c["id"] in plan.get("domains", {}):
+            c["domains"] = plan["domains"][c["id"]]
     return t
 
 
@@ -624,7 +785,7 @@ def conservation(before, after, plan):
     """What must be unchanged by the apply, row for row."""
     problems = []
     junk_contacts = {r["id"] for cid in plan["delete_junk"] for r in before.by_company[cid]}
-    b_ids = {r["id"] for r in before.recruiters} - junk_contacts
+    b_ids = {r["id"] for r in before.recruiters} - junk_contacts - set(plan.get("delete_personal", []))
     a_ids = {r["id"] for r in after.recruiters}
     if b_ids != a_ids:
         problems.append(f"contacts changed: lost {len(b_ids - a_ids)}, gained {len(a_ids - b_ids)}")
@@ -665,6 +826,7 @@ def main():
         before = State(load_snapshot(args.snapshot) if args.snapshot else load_live())
 
     plan = build_plan(before)
+    plan["domains"] = domain_ops(State(simulate(before, plan)))
     v, w = verify(before)
     write_outputs(out / "before", before, plan, v, w, "before")
     serial = {k: v for k, v in plan.items() if not k.startswith("_")}
