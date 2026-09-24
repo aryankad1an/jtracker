@@ -837,6 +837,9 @@ private struct GroupPersonRow: View {
 }
 
 /// A reply, with the opening line of what they said.
+///
+/// Fixed lines — name, company, two reserved lines of reply — so the lane is an
+/// even column however much of the reply was captured.
 private struct ReplyCard: View {
     let entry: ActivityEntry
 
@@ -853,6 +856,11 @@ private struct ReplyCard: View {
         guard !address.isEmpty,
               address.caseInsensitiveCompare(entry.contact.email) != .orderedSame else { return nil }
         return address
+    }
+
+    private var snippet: String? {
+        guard let snippet = entry.contact.replySnippet, !snippet.isEmpty else { return nil }
+        return snippet
     }
 
     var body: some View {
@@ -881,26 +889,19 @@ private struct ReplyCard: View {
                     }
                 }
 
-                Text(entry.company)
+                // Who actually answered rides on the company line rather than on
+                // a line of its own that only some cards had.
+                Text(replierNote.map { "\(entry.company) · via \($0)" } ?? entry.company)
                     .font(.caption)
                     .foregroundStyle(.inkMuted)
                     .lineLimit(1)
 
-                if let snippet = entry.contact.replySnippet, !snippet.isEmpty {
-                    Text(snippet)
-                        .font(.caption)
-                        .foregroundStyle(Color.ink.opacity(0.75))
-                        .lineLimit(3)
-                        .multilineTextAlignment(.leading)
-                        .padding(.top, 2)
-                }
-
-                if let replierNote {
-                    Text("via \(replierNote)")
-                        .font(.caption2)
-                        .foregroundStyle(.inkFaint)
-                        .lineLimit(1)
-                }
+                Text(snippet ?? "No preview of the reply was captured")
+                    .font(.caption)
+                    .foregroundStyle(snippet == nil ? Color.inkFaint : Color.ink.opacity(0.75))
+                    .lineLimit(2, reservesSpace: true)
+                    .multilineTextAlignment(.leading)
+                    .padding(.top, 2)
             }
         }
         .padding(14)

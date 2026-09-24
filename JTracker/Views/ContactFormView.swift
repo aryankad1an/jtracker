@@ -280,11 +280,12 @@ struct CompanyPickerView: View {
                             Text(company.company)
                                 .font(.headline)
                                 .foregroundStyle(Color.ink)
-                            if !company.mailDomain.isEmpty {
-                                Text("@\(company.mailDomain)")
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(Color.inkMuted)
-                            }
+                                .lineLimit(1)
+                            // Always a second line, so the results are one height.
+                            Text(company.mailDomain.isEmpty ? "No mail domain" : "@\(company.mailDomain)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(company.mailDomain.isEmpty ? Color.inkFaint : Color.inkMuted)
+                                .lineLimit(1)
                         }
                         Spacer(minLength: 8)
                         Text("\(company.contacts.count)")

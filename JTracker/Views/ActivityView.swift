@@ -250,24 +250,28 @@ private struct FeedRow: View {
                 .font(.caption)
                 .foregroundStyle(.inkMuted)
                 .lineLimit(1)
-            if let subject = entry.contact.sentSubject, !subject.isEmpty {
+            // Exactly one third line, whatever is on file: what they said if
+            // they answered, else what was sent. Each was optional and up to two
+            // lines, so the feed's cards came in five different heights.
+            if hasReplied, let snippet = entry.contact.replySnippet, !snippet.isEmpty {
+                HStack(spacing: 7) {
+                    Capsule().fill(Color.olive).frame(width: 2.5)
+                    Text(snippet)
+                        .font(.caption)
+                        .foregroundStyle(.inkMuted)
+                        .lineLimit(1)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            } else if let subject = entry.contact.sentSubject, !subject.isEmpty {
                 Text(subject)
                     .font(.caption)
                     .foregroundStyle(Color.ink.opacity(0.8))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-            }
-            if hasReplied, let snippet = entry.contact.replySnippet, !snippet.isEmpty {
-                HStack(alignment: .top, spacing: 7) {
-                    Capsule().fill(Color.olive).frame(width: 2.5)
-                    Text(snippet)
-                        .font(.caption2)
-                        .foregroundStyle(.inkMuted)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 2)
+                    .lineLimit(1)
+            } else {
+                Text("Subject not recorded")
+                    .font(.caption)
+                    .foregroundStyle(.inkFaint)
+                    .lineLimit(1)
             }
         }
         .padding(12)

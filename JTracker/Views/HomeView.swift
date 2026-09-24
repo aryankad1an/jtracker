@@ -379,20 +379,19 @@ private struct QuickActionsCard: View {
 
 /// A tracked company, carrying its own outreach state: how many people, how many
 /// answered, and how long the rest have been quiet.
+///
+/// Always the same three lines — name, head count, status — so every card in the
+/// list is the same height whatever state its company is in.
 private struct TrackingCard: View {
     let job: Job
 
-    private var replied: Int { job.repliedContacts.count }
-    private var awaiting: Int { job.awaitingContacts.count }
-
-    /// Days since the most recent mail to anyone here.
-    private var silence: Int? {
-        guard awaiting > 0,
-              let last = job.awaitingContacts.compactMap(\.sentAt).max() else { return nil }
-        return Calendar.current.dateComponents([.day], from: last, to: .now).day
+    private var subtitle: String {
+        let people = job.contacts.isEmpty
+            ? "No contacts yet"
+            : "\(job.contacts.count) contact\(job.contacts.count == 1 ? "" : "s")"
+        guard let sector = job.sector, !sector.isEmpty else { return people }
+        return "\(people) · \(sector)"
     }
-
-    private var accent: Color { .monogram(for: job.company) }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -407,28 +406,13 @@ private struct TrackingCard: View {
                     .foregroundStyle(.ink)
                     .lineLimit(1)
 
-                Text(job.contacts.isEmpty
-                     ? "No contacts yet"
-                     : "\(job.contacts.count) contact\(job.contacts.count == 1 ? "" : "s")")
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.inkMuted)
                     .lineLimit(1)
 
-                if replied > 0 || silence != nil {
-                    HStack(spacing: 6) {
-                        if replied > 0 {
-                            StatusChip(text: "\(replied) replied",
-                                       systemImage: "arrowshape.turn.up.left.fill",
-                                       color: .statusDone)
-                        }
-                        if let silence {
-                            StatusChip(text: silence == 0 ? "Sent today" : "\(silence)d quiet",
-                                       systemImage: "hourglass",
-                                       color: .statusWaiting)
-                        }
-                    }
+                OutreachChips(job: job)
                     .padding(.top, 1)
-                }
             }
 
             Spacer(minLength: 8)
