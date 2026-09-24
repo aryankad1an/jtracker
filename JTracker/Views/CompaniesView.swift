@@ -77,12 +77,12 @@ struct CompaniesView: View {
                         .cardRow()
                     }
                     .cardList()
-                    .selectionEditMode(selection.isSelecting)
+                    .listRows(selection) { path.append($0) } menu: { rowMenu($0) }
                     .refreshable { await jobStore.load() }
-                    // Each row's pin appears and disappears with the same spring.
-                    .animation(Theme.Motion.pop, value: jobStore.jobs.count)
-                    // ...but not while typing: springing the list once per
-                    // keystroke makes a search read as a shuffle.
+                    // Typing re-cuts the list on every keystroke; the rows just
+                    // change rather than springing once per character. (A row's
+                    // pin animates on the row itself — a list-wide spring on
+                    // tracking re-laid every cell for one icon.)
                     .animation(nil, value: query)
                     .scrollDismissesKeyboard(.immediately)
                 }
@@ -181,11 +181,6 @@ struct CompaniesView: View {
             let tracked = jobStore.isTracked(company.id)
             CompanyRow(job: company, isTracked: tracked)
                 .matchedTransitionSource(id: company.id, in: zoom)
-                .selectableRow(isSelecting: selection.isSelecting) {
-                    selection.begin(with: company.id)
-                } onTap: {
-                    path.append(company.id)
-                }
                 // Ask for the next 50 while ten rows are still to come, so the
                 // page lands before the list runs out rather than after.
                 .onAppear {
@@ -232,6 +227,60 @@ struct CompaniesView: View {
                     Label("Edit", systemImage: "pencil")
                 }
                 .tint(.clay)
+            }
+        }
+    }
+
+    /// A held row's menu — or, while selecting, the menu for everything ticked.
+    @ViewBuilder
+    private func rowMenu(_ ids: Set<String>) -> some View {
+        let companies = jobStore.allCompanies.filter { ids.contains($0.id) }
+        if !companies.isEmpty {
+            let allTracked = companies.allSatisfy { jobStore.isTracked($0.id) }
+            if allTracked {
+                Button {
+                    Haptics.tap()
+                    for company in companies { jobStore.untrack(companyID: company.id) }
+                } label: {
+                    Label("Untrack", systemImage: "pin.slash")
+                }
+            } else {
+                Button {
+                    let untracked = companies.filter { !jobStore.isTracked($0.id) }
+                    Haptics.cascade(untracked.count)
+                    jobStore.trackCompanies(untracked.map(\.id))
+                } label: {
+                    Label("Track", systemImage: "pin")
+                }
+            }
+            if companies.count == 1, let company = companies.first {
+                Button { editingCompany = company } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+            }
+            Button {
+                sendingTo = SendTarget(companies: companies)
+            } label: {
+                Label("Send…", systemImage: "paperplane")
+            }
+            .disabled(companies.allSatisfy { $0.validContacts.isEmpty })
+            if !selection.isSelecting {
+                Button { selection.begin(with: ids) } label: {
+                    Label("Select", systemImage: "checkmark.circle")
+                }
+            }
+            Divider()
+            Button(role: .destructive) {
+                Haptics.warning()
+                if companies.count == 1 {
+                    pendingDelete = companies.first
+                } else {
+                    // Only a selection offers more than one row to a menu, so
+                    // this is the bar's own delete, with its own dialog.
+                    confirmingDelete = true
+                }
+            } label: {
+                Label("Delete", systemImage: "trash")
             }
         }
     }

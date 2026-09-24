@@ -114,10 +114,15 @@ struct JobDetailView: View {
                     }
                 }
                 .cardList()
-                .selectionEditMode(selection.isSelecting)
+                .listRows(selection) { id in
+                    detailContact = job.contacts.first { $0.id == id }
+                } menu: { contactMenu($0) }
                 .refreshable { await jobStore.load() }
-                .animation(Theme.Motion.bouncy, value: active.map(\.id))
-                .animation(Theme.Motion.bouncy, value: invalid.map(\.id))
+                // Contacts moving between the live and invalid groups slide
+                // there; not a bouncy spring, which the list applies to every
+                // cell it moves and which reads as the cards colliding.
+                .animation(Theme.Motion.snappy, value: active.map(\.id))
+                .animation(Theme.Motion.snappy, value: invalid.map(\.id))
                 // ...but not while typing into the contact search.
                 .animation(nil, value: searchText)
             } else if jobStore.isLoading || isResolving {
@@ -418,6 +423,56 @@ struct JobDetailView: View {
         Task { await jobStore.deleteContacts(toDelete) }
     }
 
+    /// A held contact's menu — or, while selecting, the menu for everyone ticked.
+    @ViewBuilder
+    private func contactMenu(_ ids: Set<Contact.ID>) -> some View {
+        let contacts = job?.contacts.filter { ids.contains($0.id) } ?? []
+        if !contacts.isEmpty {
+            let sendable = contacts.filter { $0.isValid && $0.email.contains("@") }
+            let allInvalid = contacts.allSatisfy { !$0.isValid }
+            Button {
+                startCompose(preselect: Set(sendable.map(\.id)))
+            } label: {
+                Label("Send…", systemImage: "paperplane")
+            }
+            .disabled(sendable.isEmpty)
+            if contacts.count == 1, let contact = contacts.first {
+                Button { detailContact = contact } label: {
+                    Label("Details", systemImage: "person.text.rectangle")
+                }
+            }
+            Button {
+                if allInvalid { Haptics.success() } else { Haptics.thud() }
+                Task { await jobStore.setValidity(contacts.map(\.id), isValid: allInvalid) }
+            } label: {
+                Label(allInvalid ? "Mark Valid" : "Mark Invalid",
+                      systemImage: allInvalid ? "checkmark.circle" : "exclamationmark.triangle")
+            }
+            if !selection.isSelecting {
+                Button { selection.begin(with: ids) } label: {
+                    Label("Select", systemImage: "checkmark.circle")
+                }
+            }
+            // Sent mails are a permanent record, so a contact who's been mailed
+            // can't be deleted — the same rule as the swipe.
+            if contacts.contains(where: { !$0.isSent }) {
+                Divider()
+                Button(role: .destructive) {
+                    Haptics.warning()
+                    if contacts.count == 1 {
+                        pendingDelete = contacts.first
+                    } else {
+                        // Only a selection offers more than one row to a menu,
+                        // so this is the bar's own delete, with its own dialog.
+                        confirmingDelete = true
+                    }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private func contactRows(_ contacts: [Contact]) -> some View {
         ForEach(contacts) { contact in
@@ -426,17 +481,6 @@ struct JobDetailView: View {
                 onSend: contact.isValid ? { startCompose(preselect: [contact.id]) } : nil
             )
             .tag(contact.id)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if selection.isSelecting {
-                    selection.toggle(contact.id)
-                } else {
-                    detailContact = contact
-                }
-            }
-            .holdToSelect(isSelecting: selection.isSelecting) {
-                selection.begin(with: contact.id)
-            }
             .swipeActions(edge: .trailing) {
                 if !contact.isSent {
                     Button(role: .destructive) {

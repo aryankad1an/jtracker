@@ -253,10 +253,6 @@ extension View {
                                       bottom: bottom, trailing: Theme.Space.gutter))
     }
 
-    /// Puts a `List` into (or out of) its multi-select mode.
-    func selectionEditMode(_ isSelecting: Bool) -> some View {
-        environment(\.editMode, .constant(isSelecting ? .active : .inactive))
-    }
 }
 
 /// Graph paper: faint rules on a square grid, every fourth one a shade
@@ -327,11 +323,17 @@ struct LoadingRow: View {
 /// writes the new value back only *after* it returns — outside its own
 /// `withAnimation` — so entering and leaving the mode quietly stopped animating.
 /// Here the state changes inside the animation, where it belongs.
+///
+/// The mode is stored as the `List`'s own `EditMode`, handed to it as a real
+/// binding by `listRows`, rather than derived into a `.constant`. That's what
+/// lets the list switch it on by itself: a two-finger drag down the rows starts
+/// the multi-select *and* the mode in one stroke, as it does in Files and Mail.
 @Observable
 final class ListSelection<ID: Hashable> {
-    var isSelecting = false
+    var editMode: EditMode = .inactive
     var ids = Set<ID>()
 
+    var isSelecting: Bool { editMode.isEditing }
     var count: Int { ids.count }
     func contains(_ id: ID) -> Bool { ids.contains(id) }
 
@@ -339,28 +341,62 @@ final class ListSelection<ID: Hashable> {
     func enter() {
         ids = []
         Haptics.press()
-        withAnimation(Theme.Motion.liquid) { isSelecting = true }
+        withAnimation(Theme.Motion.liquid) { editMode = .active }
     }
 
-    /// From holding a row: the mode opens with that row already picked, which is
-    /// the whole reason to hold *this* row. `SelectionHold` plays the knock.
-    func begin(with id: ID) {
+    /// From a row's context menu: the mode opens with those rows already picked,
+    /// which is the whole reason to have asked from *that* row.
+    func begin(with ids: Set<ID>) {
         withAnimation(Theme.Motion.liquid) {
-            ids = [id]
-            isSelecting = true
+            self.ids = ids
+            editMode = .active
         }
     }
 
     func exit() {
         Haptics.tap(0.5)
         withAnimation(Theme.Motion.liquid) {
-            isSelecting = false
+            editMode = .inactive
             ids = []
         }
     }
+}
 
-    func toggle(_ id: ID) {
-        if ids.contains(id) { ids.remove(id) } else { ids.insert(id) }
+extension View {
+    /// The row interaction every card list in the app shares, done the way the
+    /// system's own lists (Files, Mail, Notes) do it — by the `List`, not by
+    /// gestures on the rows:
+    ///
+    /// - a tap opens the row (`open`), and in selection mode ticks it instead;
+    /// - a hold lifts the row into its context menu (`menu`), with the list's
+    ///   own preview and haptics — or, in selection mode, the menu for
+    ///   everything ticked;
+    /// - a two-finger drag down the rows enters selection mode and sweeps a
+    ///   range into it;
+    /// - swipe actions and scrolling are never contested by a row gesture.
+    ///
+    /// Rows used to be `Button`s with a simultaneous long-press on top. Every
+    /// touch that started a scroll pressed the card (a dip, a knock), the
+    /// long-press sat in the scroll view's way, a hold raced the context menu
+    /// where a row had one, and the mode's `.constant` edit mode left the
+    /// two-finger gesture nothing to switch on. Here the rows are plain views
+    /// and the cell does all of it.
+    ///
+    /// Only tagged rows take part (a `ForEach` over the selection's IDs tags its
+    /// rows itself), so a header card or a disclosure row in the same `List` is
+    /// neither opened, menu'd, nor selectable.
+    func listRows<ID: Hashable, MenuContent: View>(
+        _ selection: ListSelection<ID>,
+        open: @escaping (ID) -> Void,
+        @ViewBuilder menu: @escaping (Set<ID>) -> MenuContent
+    ) -> some View {
+        environment(\.editMode, Binding { selection.editMode } set: { selection.editMode = $0 })
+            .contextMenu(forSelectionType: ID.self, menu: menu) { ids in
+                // A tap is one row; a primary action on a multi-row set (a
+                // keyboard Return over a selection) has no single thing to open.
+                guard !selection.isSelecting, ids.count == 1, let id = ids.first else { return }
+                open(id)
+            }
     }
 }
 

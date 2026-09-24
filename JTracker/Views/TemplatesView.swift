@@ -5,7 +5,8 @@ import SwiftUI
 /// A card is the template at a glance — its name, whether it's ready to send
 /// (the same checks the editor runs, against your profile), the subject, the
 /// opening lines with every placeholder lit up, and which placeholders it fills.
-/// Tap to edit; hold for Duplicate and Delete; swipe to delete.
+/// Tap to edit; hold for Duplicate, Select and Delete; swipe to delete; drag two
+/// fingers down the cards to select several.
 struct TemplatesView: View {
     @Environment(TemplateStore.self) private var store
     @Environment(ProfileStore.self) private var profileStore
@@ -45,7 +46,9 @@ struct TemplatesView: View {
                         }
                     }
                     .cardList()
-                    .selectionEditMode(selection.isSelecting)
+                    .listRows(selection) { id in
+                        editingTemplate = store.templates.first { $0.id == id }
+                    } menu: { rowMenu($0) }
                     // Templates are per-account, not per-device — pull to sync in
                     // whatever another of the user's signed-in clients has saved.
                     .refreshable { await store.refresh() }
@@ -109,19 +112,6 @@ struct TemplatesView: View {
     private func templateCard(_ template: MailTemplate) -> some View {
         TemplateCard(template: template,
                      status: TemplateStatus(template: template, profile: profileStore.profile))
-            .selectableRow(isSelecting: selection.isSelecting) {
-                selection.begin(with: template.id)
-            } onTap: {
-                editingTemplate = template
-            }
-            .contextMenu {
-                Button("Edit", systemImage: "pencil") { editingTemplate = template }
-                Button("Duplicate", systemImage: "plus.square.on.square") {
-                    Task { await store.duplicate(template) }
-                }
-                Divider()
-                Button("Delete", systemImage: "trash", role: .destructive) { pendingDelete = template }
-            }
             .swipeActions(edge: .trailing) {
                 if !selection.isSelecting {
                     Button(role: .destructive) {
@@ -139,9 +129,35 @@ struct TemplatesView: View {
                     .tint(.slate)
                 }
             }
-            // Outermost, so the list reads it: inside the tap wrapper, the
-            // separator and row fill came back.
             .cardRow(top: 6, bottom: 6)
+    }
+
+    /// A held card's menu — or, while selecting, the menu for everything ticked.
+    /// It used to sit on the card itself, alongside a hold-to-select gesture of
+    /// the same length: one hold both lifted the menu and started the selection.
+    @ViewBuilder
+    private func rowMenu(_ ids: Set<MailTemplate.ID>) -> some View {
+        let templates = store.templates.filter { ids.contains($0.id) }
+        if templates.count == 1, let template = templates.first {
+            Button("Edit", systemImage: "pencil") { editingTemplate = template }
+            Button("Duplicate", systemImage: "plus.square.on.square") {
+                Task { await store.duplicate(template) }
+            }
+        }
+        if !templates.isEmpty {
+            if !selection.isSelecting {
+                Button("Select", systemImage: "checkmark.circle") { selection.begin(with: ids) }
+            }
+            Divider()
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                Haptics.warning()
+                if templates.count == 1 {
+                    pendingDelete = templates.first
+                } else {
+                    confirmingDelete = true
+                }
+            }
+        }
     }
 
     private func deleteSelected() {

@@ -10,15 +10,17 @@ import SwiftUI
 /// without leaving the screen.
 ///
 /// Rows are `List` rows with cleared backgrounds rather than a `ScrollView` of
-/// cards, so swipe-to-untrack keeps working while the cards get their own shape.
+/// cards, so the list's own interactions — tap, hold for the menu, swipe to
+/// untrack, two-finger drag to select — keep working while the cards get their
+/// own shape.
 struct HomeView: View {
     @Environment(JobStore.self) private var jobStore
     @Environment(ReplySync.self) private var replySync
 
     @State private var showingQuickActions = false
-    /// Drives navigation to a tracked company's detail. Rows are plain `Button`s
-    /// (not `NavigationLink`) so the card fills the row without the system's
-    /// chevron and inset.
+    /// Drives navigation to a tracked company's detail. Rows open through the
+    /// list's primary action (not `NavigationLink`) so the card fills the row
+    /// without the system's chevron and inset.
     @State private var path = NavigationPath()
     /// Companies removed in the last action, kept briefly so the Undo bar can
     /// restore them. Cleared after a few seconds or once Undo is tapped.
@@ -74,12 +76,14 @@ struct HomeView: View {
                         trackingSection
                     }
                     .cardList()
+                    .listRows(selection) { path.append($0) } menu: { rowMenu($0) }
                     .refreshable { await jobStore.load() }
                     .scrollDismissesKeyboard(.immediately)
-                    .selectionEditMode(selection.isSelecting)
-                    // Rows springing in and out is the whole feedback for tracking
-                    // and untracking — the list is where the change lands.
-                    .animation(Theme.Motion.bouncy, value: jobStore.jobs.map(\.id))
+                    // Rows sliding in and out is the whole feedback for tracking
+                    // and untracking — the list is where the change lands. Not a
+                    // bouncy spring: the list moves its cells with it, and an
+                    // overshoot there reads as cards colliding.
+                    .animation(Theme.Motion.snappy, value: jobStore.jobs.map(\.id))
                     // Typing re-cuts the list on every keystroke, and a spring per
                     // character turns a search into a shuffle. The rows just change.
                     .animation(nil, value: query)
@@ -168,11 +172,6 @@ struct HomeView: View {
                 ForEach(filteredJobs) { job in
                     TrackingCard(job: job)
                         .matchedTransitionSource(id: job.id, in: zoom)
-                        .selectableRow(isSelecting: selection.isSelecting) {
-                            selection.begin(with: job.id)
-                        } onTap: {
-                            path.append(job.id)
-                        }
                         .cardRow()
                         .swipeActions(edge: .trailing) { untrackButton(job) }
                         .swipeActions(edge: .leading) { untrackButton(job) }
@@ -187,6 +186,32 @@ struct HomeView: View {
         }
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
+    }
+
+    /// A held row's menu — or, while selecting, the menu for everything ticked.
+    @ViewBuilder
+    private func rowMenu(_ ids: Set<String>) -> some View {
+        let jobs = jobStore.jobs.filter { ids.contains($0.id) }
+        if !jobs.isEmpty {
+            Button {
+                sendingTo = SendTarget(companies: jobs)
+            } label: {
+                Label("Send…", systemImage: "paperplane")
+            }
+            .disabled(jobs.allSatisfy { $0.validContacts.isEmpty })
+            if !selection.isSelecting {
+                Button { selection.begin(with: ids) } label: {
+                    Label("Select", systemImage: "checkmark.circle")
+                }
+            }
+            Divider()
+            Button(role: .destructive) {
+                selection.ids.subtract(ids)
+                remove(jobs)
+            } label: {
+                Label(jobs.count == 1 ? "Untrack" : "Untrack \(jobs.count)", systemImage: "pin.slash")
+            }
+        }
     }
 
     private func untrackButton(_ job: Job) -> some View {
