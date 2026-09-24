@@ -60,9 +60,9 @@ struct QuickActionsView: View {
                     if !bouncedContacts.isEmpty { bounceBanner }
 
                     SegmentedSelector(segments: [
-                        (.waiting, "Waiting", "hourglass"),
-                        (.replied, "Replied", "arrowshape.turn.up.left.fill"),
-                        (.reachOut, "New", "sparkles")
+                        (.waiting, "Waiting"),
+                        (.replied, "Replied"),
+                        (.reachOut, "New")
                     ], selection: laneBinding)
 
                     laneContent
@@ -88,7 +88,7 @@ struct QuickActionsView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .safeAreaInset(edge: .bottom) { sendBar }
+            .toolbar { sendToolbar }
             .refreshable { await sync() }
             // A check that actually found something is the one moment this screen
             // changes on its own, so it gets the double-tap "arrived" knock. A
@@ -106,7 +106,7 @@ struct QuickActionsView: View {
                 MailSummaryView(contact: item.contact, company: item.company)
             }
             .sheet(item: $sendBatch) { batch in
-                SuggestedSendView(title: batch.title, recipients: batch.recipients) {
+                SendMailView(title: batch.title, recipients: batch.recipients) {
                     sendBatch = nil
                     selection.removeAll()
                 }
@@ -144,7 +144,7 @@ struct QuickActionsView: View {
         let mails = waitingMails
         VStack(spacing: 12) {
             SegmentedSelector(segments: Self.dayOptions.map {
-                (value: $0, title: $0 == 0 ? "Any" : "\($0)d+", systemImage: nil)
+                (value: $0, title: $0 == 0 ? "Any" : "\($0)d+")
             }, selection: $waitingDays)
 
             if mails.isEmpty {
@@ -330,71 +330,48 @@ struct QuickActionsView: View {
         }
     }
 
-    /// The bar that turns a lane into a batch.
+    /// The toolbar that turns a lane into a batch: the system bottom toolbar,
+    /// like every other bar in the app that acts on a set of rows.
     ///
-    /// The Send button acts on the ticks when there are any and on the whole lane
-    /// when there aren't, so "send all" is one tap rather than select-all then
-    /// send — and it says which of the two it will do, so the tap is never a
-    /// guess. Nothing goes out from here: the batch opens the same compose sheet
-    /// a per-company send does, with its template picker and its review screen.
-    @ViewBuilder
-    private var sendBar: some View {
-        let all = targets
-        if !all.isEmpty {
-            let chosen = picked
-            HStack(spacing: 10) {
-                Button {
-                    Haptics.press()
-                    withAnimation(Theme.Motion.pop) {
-                        if chosen.count == all.count {
+    /// Send acts on the ticks when there are any and on the whole lane when
+    /// there aren't, so "send all" is one tap rather than select-all then send —
+    /// and it says which of the two it will do, so the tap is never a guess.
+    /// Nothing goes out from here: the batch opens the compose sheet.
+    @ToolbarContentBuilder
+    private var sendToolbar: some ToolbarContent {
+        if !targets.isEmpty {
+            ToolbarItem(placement: .bottomBar) {
+                Button(isAllPicked ? "Deselect All" : "Select All") {
+                    withAnimation(Theme.Motion.snappy) {
+                        if isAllPicked {
                             selection.removeAll()
                         } else {
-                            selection = Set(all.map(\.contact.id))
+                            selection = Set(targets.map(\.contact.id))
                         }
                     }
-                } label: {
-                    Image(systemName: chosen.count == all.count
-                          ? "checkmark.circle.fill" : "circle")
-                        .font(.title3)
-                        .foregroundStyle(chosen.count == all.count ? Color.clay : Color.inkMuted)
-                        .symbolEffect(.bounce, value: chosen.count == all.count)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(chosen.count == all.count ? "Deselect all" : "Select all")
-
-                Text(chosen.isEmpty
-                     ? "\(all.count) \(lane == .waiting ? "to follow up" : "to reach out")"
-                     : "\(chosen.count) of \(all.count) selected")
-                    .font(.subheadline)
-                    .foregroundStyle(.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .contentTransition(.numericText())
-
-                Spacer(minLength: 6)
-
-                Button {
-                    send(chosen.isEmpty ? all : chosen)
-                } label: {
-                    Label(chosen.isEmpty ? "Send All" : "Send \(chosen.count)",
-                          systemImage: "paperplane.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                }
-                .filledButton()
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            // Glass, and floating rather than docked — the same object the
-            // selection bars elsewhere in the app are: it sits *over* the rows it
-            // acts on, and the material is what keeps them legible underneath.
-            .glassEffect(.regular, in: .rect(cornerRadius: Theme.Radius.card))
-            .padding(.horizontal, Theme.Space.gutter)
-            .padding(.bottom, 6)
-            .transition(.glassRise)
-            .animation(Theme.Motion.bouncy, value: all.count)
-            .animation(Theme.Motion.pop, value: selection)
+
+            BottomBarStatus(text: picked.isEmpty
+                            ? "\(targets.count) \(lane == .waiting ? "to follow up" : "to reach out")"
+                            : "\(picked.count) of \(targets.count) selected")
+
+            ToolbarItem(placement: .bottomBar) {
+                Button {
+                    send(picked.isEmpty ? targets : picked)
+                } label: {
+                    Label(picked.isEmpty ? "Send All" : "Send \(picked.count)",
+                          systemImage: "paperplane.fill")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(.clay)
+            }
         }
+    }
+
+    private var isAllPicked: Bool {
+        !targets.isEmpty && picked.count == targets.count
     }
 
     private func send(_ recipients: [(contact: Contact, company: String)]) {
@@ -454,13 +431,12 @@ struct QuickActionsView: View {
 
 // MARK: - Lane transition
 
-/// The lane swap, given the character of the glass control that drives it: the
-/// outgoing set blurs, shrinks and slides out under the incoming one, which
-/// arrives from the side the selector's capsule just travelled.
+/// The lane swap: the outgoing set fades and slides out under the incoming one,
+/// which arrives from the side of the segment just picked.
 ///
-/// It's a modifier transition rather than a `.move` because the blur is what
-/// makes it read as glass — content going soft and out of focus as it leaves,
-/// rather than a hard rectangle sliding across.
+/// It used to blur the whole lane as it went. A blur over a screenful of cards
+/// is an offscreen render per frame — the swap stuttered on long lanes — and the
+/// system's own page changes don't do it.
 private struct GlassSwap: ViewModifier {
     /// 0 settled, 1 fully away.
     let progress: Double
@@ -469,7 +445,6 @@ private struct GlassSwap: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .blur(radius: 10 * progress)
             .opacity(1 - progress)
             .scaleEffect(1 - 0.05 * progress, anchor: .top)
             .offset(x: 34 * progress * direction)
@@ -561,7 +536,7 @@ private struct StatusStrip: View {
             if sync.isSyncing && sync.progress.total > 0 {
                 ProgressView(value: sync.progress.fraction)
                     .tint(.clay)
-                    .transition(LiquidMaterialize(scale: 0.9, blur: 8, anchor: .top))
+                    .transition(LiquidMaterialize(scale: 0.9, anchor: .top))
             }
 
             HStack(spacing: 8) {
@@ -837,6 +812,9 @@ private struct GroupPersonRow: View {
 }
 
 /// A reply, with the opening line of what they said.
+///
+/// Fixed lines — name, company, two reserved lines of reply — so the lane is an
+/// even column however much of the reply was captured.
 private struct ReplyCard: View {
     let entry: ActivityEntry
 
@@ -853,6 +831,11 @@ private struct ReplyCard: View {
         guard !address.isEmpty,
               address.caseInsensitiveCompare(entry.contact.email) != .orderedSame else { return nil }
         return address
+    }
+
+    private var snippet: String? {
+        guard let snippet = entry.contact.replySnippet, !snippet.isEmpty else { return nil }
+        return snippet
     }
 
     var body: some View {
@@ -881,26 +864,19 @@ private struct ReplyCard: View {
                     }
                 }
 
-                Text(entry.company)
+                // Who actually answered rides on the company line rather than on
+                // a line of its own that only some cards had.
+                Text(replierNote.map { "\(entry.company) · via \($0)" } ?? entry.company)
                     .font(.caption)
                     .foregroundStyle(.inkMuted)
                     .lineLimit(1)
 
-                if let snippet = entry.contact.replySnippet, !snippet.isEmpty {
-                    Text(snippet)
-                        .font(.caption)
-                        .foregroundStyle(Color.ink.opacity(0.75))
-                        .lineLimit(3)
-                        .multilineTextAlignment(.leading)
-                        .padding(.top, 2)
-                }
-
-                if let replierNote {
-                    Text("via \(replierNote)")
-                        .font(.caption2)
-                        .foregroundStyle(.inkFaint)
-                        .lineLimit(1)
-                }
+                Text(snippet ?? "No preview of the reply was captured")
+                    .font(.caption)
+                    .foregroundStyle(snippet == nil ? Color.inkFaint : Color.ink.opacity(0.75))
+                    .lineLimit(2, reservesSpace: true)
+                    .multilineTextAlignment(.leading)
+                    .padding(.top, 2)
             }
         }
         .padding(14)

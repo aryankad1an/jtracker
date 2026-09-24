@@ -188,6 +188,13 @@ struct Job: Identifiable, Decodable {
     var repliedContacts: [Contact] { contacts.filter(\.hasReplied) }
     var awaitingContacts: [Contact] { contacts.filter { $0.isSent && !$0.hasReplied } }
 
+    /// Days since the most recent mail to anyone here who hasn't answered — nil
+    /// when nobody is waiting on a reply.
+    var quietDays: Int? {
+        guard let last = awaitingContacts.compactMap(\.sentAt).max() else { return nil }
+        return Calendar.current.dateComponents([.day], from: last, to: .now).day
+    }
+
     /// Whether this company answers a search box. Matching runs over the people
     /// inside as well as the company itself, so a half-remembered contact's name
     /// finds the company you'd have to have remembered to find them — the same

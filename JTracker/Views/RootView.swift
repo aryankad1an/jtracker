@@ -139,7 +139,7 @@ struct RootView: View {
     private var signedInApp: some View {
         if !profileStore.hasProfile {
             OnboardingView()
-                .transition(LiquidMaterialize(scale: 1, blur: 12))
+                .transition(LiquidMaterialize(scale: 1))
         } else {
             tabs
                 .transition(.opacity)

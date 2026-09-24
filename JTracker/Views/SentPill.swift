@@ -27,7 +27,40 @@ struct StatusChip: View {
         // Replied, anything becoming Invalid. Springing in from the trailing edge
         // it shares with the chip it replaced makes that read as a swap rather
         // than as two unrelated fades.
-        .transition(LiquidMaterialize(scale: 0.7, blur: 4, anchor: .trailing))
+        .transition(LiquidMaterialize(scale: 0.7, anchor: .trailing))
+    }
+}
+
+/// A company's outreach state as one line of chips — replies, and how long the
+/// rest have been quiet — shared by the Home and Companies cards.
+///
+/// The line always holds at least one chip. It used to appear only once someone
+/// had been mailed, so a company you'd started on was a line taller than one you
+/// hadn't, and the list's rows jumped between two heights as you scrolled.
+/// Saying "not mailed yet" is also more use than saying nothing.
+struct OutreachChips: View {
+    let job: Job
+
+    var body: some View {
+        let replied = job.repliedContacts.count
+        let quiet = job.quietDays
+        HStack(spacing: 6) {
+            if replied > 0 {
+                StatusChip(text: "\(replied) replied",
+                           systemImage: "arrowshape.turn.up.left.fill",
+                           color: .statusDone)
+            }
+            if let quiet {
+                StatusChip(text: quiet == 0 ? "Sent today" : "\(quiet)d quiet",
+                           systemImage: "hourglass",
+                           color: .statusWaiting)
+            }
+            if replied == 0 && quiet == nil {
+                StatusChip(text: job.contacts.isEmpty ? "No contacts" : "Not mailed yet",
+                           systemImage: job.contacts.isEmpty ? "person.slash" : "sparkle",
+                           color: .inkFaint)
+            }
+        }
     }
 }
 

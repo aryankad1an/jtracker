@@ -76,7 +76,7 @@ struct SendQueueBar: View {
             }
             .frame(width: 21, height: 21)
             .animation(Theme.Motion.settle, value: queue.progress)
-            .transition(LiquidMaterialize(scale: 0.5, blur: 4))
+            .transition(LiquidMaterialize(scale: 0.5))
         } else if let outcome = queue.outcome {
             Image(systemName: outcome.failed.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .font(.title3)
@@ -84,7 +84,7 @@ struct SendQueueBar: View {
                 // The tick replaces the progress ring in the same 21pt slot, so
                 // it springs in rather than swapping — the run visibly finishes.
                 .symbolEffect(.bounce, value: outcome.sent)
-                .transition(LiquidMaterialize(scale: 0.4, blur: 4))
+                .transition(LiquidMaterialize(scale: 0.4))
         }
     }
 

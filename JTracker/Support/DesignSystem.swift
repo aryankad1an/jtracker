@@ -134,32 +134,32 @@ extension View {
     /// Paired with `Theme.Motion.bouncy` it reads as the view springing into the
     /// space rather than being cross-faded into it.
     func popIn(anchor: UnitPoint = .center) -> some View {
-        transition(LiquidMaterialize(scale: 0.86, blur: 8, anchor: anchor))
+        transition(LiquidMaterialize(scale: 0.86, anchor: anchor))
     }
 }
 
-/// A card dips, springs back, and knocks once on the way down.
+/// A card dips and springs back while it's held.
 ///
-/// The knock is on press rather than on release deliberately: it confirms the
-/// finger landed on the card, which is the moment the user is still deciding
-/// whether they hit the right row. Feedback on release would arrive after the
-/// screen had already started changing, where it says nothing new.
+/// No haptic. The system's controls don't knock on touch-down, and a knock on
+/// press fired whenever a scroll happened to start on a card — every flick
+/// through a feed buzzed. Haptics in the app mark things that *happened* (a
+/// send, a delete, a selection), not fingers landing.
 struct CardPress: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         PressBody(isPressed: configuration.isPressed,
-                  scale: 0.972, dim: 0.82, intensity: 0.55) {
+                  scale: 0.972, dim: 0.82) {
             configuration.label
         }
     }
 }
 
-/// The same idea at small-control scale: a deeper dip, a lighter knock.
+/// The same idea at small-control scale: a deeper dip.
 struct BouncyPress: ButtonStyle {
     var scale: CGFloat = 0.88
 
     func makeBody(configuration: Configuration) -> some View {
         PressBody(isPressed: configuration.isPressed,
-                  scale: scale, dim: 1, intensity: 0.45) {
+                  scale: scale, dim: 1) {
             configuration.label
         }
     }
@@ -171,14 +171,12 @@ struct BouncyPress: ButtonStyle {
 /// can't read the environment directly, and Reduce Motion has to be honoured here
 /// above anywhere else in the app: this is the one treatment that fires on
 /// essentially every tap. With it on, the dip is dropped and the button reports
-/// itself through opacity and the haptic alone — the *feedback* is kept, only the
-/// movement is spent. Turning the haptic off too would leave the setting removing
-/// confirmation rather than removing motion.
+/// itself through opacity alone — the *feedback* is kept, only the movement is
+/// spent.
 private struct PressBody<Label: View>: View {
     let isPressed: Bool
     let scale: CGFloat
     let dim: Double
-    let intensity: Double
     @ViewBuilder var label: Label
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -187,10 +185,9 @@ private struct PressBody<Label: View>: View {
         label
             .scaleEffect(isPressed && !reduceMotion ? scale : 1)
             .opacity(isPressed ? dim : 1)
-            .animation(reduceMotion ? Theme.Motion.quick : Theme.Motion.pop, value: isPressed)
-            .sensoryFeedback(trigger: isPressed) { _, pressed in
-                pressed ? .impact(weight: .light, intensity: intensity) : nil
-            }
+            // Not the springy `pop`: a card wobbling under a held finger reads
+            // as lag. The system's highlight is quick and flat.
+            .animation(reduceMotion ? Theme.Motion.quick : Theme.Motion.snappy, value: isPressed)
     }
 }
 
@@ -243,6 +240,9 @@ extension View {
     func cardList() -> some View {
         listStyle(.plain)
             .scrollContentBackground(.hidden)
+            // Rows are as tall as their cards, not padded up to the system's 44pt
+            // minimum — a day label in Activity is shorter than that.
+            .environment(\.defaultMinListRowHeight, 0)
     }
 
     /// One card in a `cardList`: no separator, no row fill, the gutter either side.
@@ -492,81 +492,27 @@ struct SectionLabel: View {
 
 // MARK: - Selector
 
-/// A sliding segmented control, in Liquid Glass.
+/// The app's segmented control: the system's own.
 ///
-/// The selected segment is one glass capsule that travels rather than a
-/// per-segment highlight, so switching reads as movement. Glass is the right
-/// material here specifically *because* it's a floating control over content:
-/// it picks up the paper beneath it and the specular edge marks it as the thing
-/// that moves, which a flat fill can't do.
-///
-/// Tinted with clay rather than filled with it — a solid accent capsule would
-/// put the loudest colour on screen on a control rather than on what the control
-/// found.
+/// It used to be hand-built — a glass capsule morphing between buttons inside a
+/// `GlassEffectContainer`, with a bouncing glyph per segment. It looked the part
+/// but re-rendered glass on every switch and never quite moved like the system
+/// control beside it in Settings or Mail. `Picker(.segmented)` is what the
+/// built-in apps use, and it brings the system's feel, VoiceOver behaviour and
+/// Dynamic Type for free. Titles only: the system control shows a title or a
+/// glyph per segment, and a title is what these lanes need.
 struct SegmentedSelector<Value: Hashable>: View {
-    /// `systemImage` is optional: a lane reads better with its glyph, but a row
-    /// of five short filters ("All", "3d+", "7d+"…) reads better without one —
-    /// at that width the icons crowd out the words they were labelling.
-    let segments: [(value: Value, title: String, systemImage: String?)]
+    let segments: [(value: Value, title: String)]
     @Binding var selection: Value
 
-    @Namespace private var pill
-
     var body: some View {
-        GlassEffectContainer(spacing: 4) {
-            HStack(spacing: 2) {
-                ForEach(segments, id: \.value) { segment in
-                    segmentButton(segment)
-                }
+        Picker("", selection: $selection.animation(Theme.Motion.snappy)) {
+            ForEach(segments, id: \.value) { segment in
+                Text(segment.title).tag(segment.value)
             }
-            .padding(3)
         }
-        .background(Color.paperSunken, in: .capsule)
-        // On the value rather than in the button action, so a segment changed
-        // programmatically (a lane pruned, a mode restored) clicks too.
-        .sensoryFeedback(.selection, trigger: selection)
-    }
-
-    /// Glass wraps the selected segment itself, not a layer behind it. Applied as
-    /// a background, the material composited *over* the label and greyed out the
-    /// very word it was meant to pick out.
-    @ViewBuilder
-    private func segmentButton(_ segment: (value: Value, title: String, systemImage: String?)) -> some View {
-        let isOn = segment.value == selection
-        let button = Button {
-            withAnimation(Theme.Motion.bouncy) { selection = segment.value }
-        } label: {
-            HStack(spacing: 5) {
-                if let systemImage = segment.systemImage {
-                    Image(systemName: systemImage)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isOn ? Color.clay : Color.inkFaint)
-                        // The glyph bounces as its segment takes the pill, so the
-                        // travelling capsule lands on something that reacts to it.
-                        .symbolEffect(.bounce, value: isOn)
-                }
-                Text(segment.title)
-                    .font(.subheadline.weight(isOn ? .semibold : .regular))
-                    .foregroundStyle(isOn ? Color.ink : Color.inkMuted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isOn ? [.isSelected] : [])
-
-        if isOn {
-            button
-                .glassEffect(.regular.tint(Color.clay.opacity(0.16)).interactive(), in: .capsule)
-                // A single id for whichever segment is selected, so the container
-                // morphs one pane across rather than cross-fading two.
-                .glassEffectID("selected", in: pill)
-        } else {
-            button
-        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
     }
 }
 

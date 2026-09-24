@@ -59,17 +59,11 @@ struct TemplatesView: View {
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $searchText, prompt: "Search templates")
             .toolbar {
-                if selection.isSelecting {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        DoneButton { selection.exit() }
-                    }
-                } else {
+                if !selection.isSelecting {
+                    // A word, not a glyph, as in Photos and Files.
                     ToolbarItem(placement: .topBarTrailing) {
                         if !store.templates.isEmpty {
-                            Button { selection.enter() } label: {
-                                Image(systemName: "checkmark.circle")
-                            }
-                            .accessibilityLabel("Select templates")
+                            Button("Select") { selection.enter() }
                         }
                     }
                     // Writing a template is what this screen is for, so it's a
@@ -83,8 +77,8 @@ struct TemplatesView: View {
                 }
             }
             .selectionActions(
-                isSelecting: selection.isSelecting,
-                count: selection.count,
+                selection,
+                all: rows.map(\.id),
                 noun: SelectionNoun(singular: "template", plural: "templates"),
                 confirmingDelete: $confirmingDelete,
                 onDelete: deleteSelected
@@ -220,6 +214,9 @@ private struct TemplateStatus {
 
 // MARK: - Card
 
+/// Every line has a fixed allowance — one for the name, one for the subject,
+/// three (reserved even when the body is shorter) for the opening, one for the
+/// placeholders — so every card in the list is the same height.
 private struct TemplateCard: View {
     let template: MailTemplate
     let status: TemplateStatus
@@ -245,13 +242,13 @@ private struct TemplateCard: View {
                     Text(template.name)
                         .font(.display(18))
                         .foregroundStyle(.ink)
-                        .lineLimit(2)
+                        .lineLimit(1)
                     Text(template.subject.isEmpty
                          ? AttributedString("No subject")
                          : Self.highlighted(template.subject, font: .subheadline.weight(.medium)))
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(template.subject.isEmpty ? Color.inkFaint : Color.inkMuted)
-                        .lineLimit(2)
+                        .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 status.chip
@@ -262,7 +259,7 @@ private struct TemplateCard: View {
                                   font: .callout.weight(.semibold)))
                 .font(.callout)
                 .foregroundStyle(Color.ink.opacity(0.82))
-                .lineLimit(3)
+                .lineLimit(3, reservesSpace: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
                 .background(Color.paperSunken, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -273,14 +270,12 @@ private struct TemplateCard: View {
                         .font(.caption)
                         .foregroundStyle(.inkFaint)
                 } else {
-                    WrappingHStack(spacing: 5, lineSpacing: 5) {
-                        ForEach(placeholders) { placeholder in
-                            Text(placeholder.shortLabel)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.slate)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(Color.slate.opacity(0.14), in: Capsule())
+                    // One line, never wrapping: as many chips as fit, then a
+                    // "+N" for the rest. Wrapping made a placeholder-heavy
+                    // template a card taller than its neighbours.
+                    ViewThatFits(in: .horizontal) {
+                        ForEach((0...placeholders.count).reversed(), id: \.self) { shown in
+                            placeholderChips(shown)
                         }
                     }
                 }
@@ -293,6 +288,26 @@ private struct TemplateCard: View {
         }
         .padding(14)
         .panel()
+    }
+
+    private func placeholderChips(_ shown: Int) -> some View {
+        HStack(spacing: 5) {
+            ForEach(placeholders.prefix(shown)) { placeholder in
+                Text(placeholder.shortLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.slate)
+                    .lineLimit(1)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.slate.opacity(0.14), in: Capsule())
+            }
+            if shown < placeholders.count {
+                Text("+\(placeholders.count - shown)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.inkMuted)
+            }
+        }
+        .fixedSize()
     }
 
     /// The body with each placeholder token coloured clay and set semibold, and

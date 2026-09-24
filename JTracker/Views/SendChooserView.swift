@@ -104,7 +104,7 @@ private struct SendChooserFlow: ViewModifier {
                 .presentationDetents([.medium, .large])
             }
             .sheet(item: $batch) { batch in
-                SuggestedSendView(title: batch.title, recipients: batch.recipients) {
+                SendMailView(title: batch.title, recipients: batch.recipients) {
                     self.batch = nil
                     onSent()
                 }
@@ -205,10 +205,11 @@ private struct AudienceCard: View {
                         Text(audience.title)
                             .font(.headline)
                             .foregroundStyle(.ink)
+                            .lineLimit(1)
                         Text(audience.detail)
                             .font(.caption)
                             .foregroundStyle(.inkMuted)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(2, reservesSpace: true)
                     }
                     Spacer(minLength: 8)
                     VStack(alignment: .trailing, spacing: 0) {
@@ -222,9 +223,9 @@ private struct AudienceCard: View {
                     }
                 }
 
-                if total > 0 {
-                    DistributionBar(picks: picks, total: total)
-                }
+                // Drawn empty rather than left out when nobody qualifies, so an
+                // empty audience's card is the same height as the rest.
+                DistributionBar(picks: picks, total: total)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -254,6 +255,9 @@ private struct DistributionBar: View {
         VStack(alignment: .leading, spacing: 6) {
             GeometryReader { geometry in
                 HStack(spacing: 2) {
+                    if segments.isEmpty {
+                        Capsule().fill(Color.hairline)
+                    }
                     ForEach(segments, id: \.name) { segment in
                         Capsule()
                             .fill(Color.monogram(for: segment.name))
@@ -264,7 +268,8 @@ private struct DistributionBar: View {
             }
             .frame(height: 6)
 
-            Text(segments.prefix(3).map { "\($0.name) \($0.count)" }.joined(separator: " · ")
+            Text(segments.isEmpty ? "Nobody right now"
+                 : segments.prefix(3).map { "\($0.name) \($0.count)" }.joined(separator: " · ")
                  + (segments.count > 3 ? " · +\(segments.count - 3)" : ""))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.inkFaint)

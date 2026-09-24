@@ -140,10 +140,8 @@ struct JobDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search contacts")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if selection.isSelecting {
-                    DoneButton { selection.exit() }
-                } else {
+            if !selection.isSelecting {
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
                             editingCompany = job
@@ -172,8 +170,8 @@ struct JobDetailView: View {
             }
         }
         .selectionActions(
-            isSelecting: selection.isSelecting,
-            count: selection.count,
+            selection,
+            all: job.map { sortedContacts($0).map(\.id) } ?? [],
             noun: SelectionNoun(singular: "contact", plural: "contacts"),
             confirmingDelete: $confirmingDelete,
             deleteMessage: "This permanently deletes the selected contacts from the shared database, for every user. Sent ones are kept. This can't be undone.",
@@ -339,7 +337,7 @@ struct JobDetailView: View {
                 // many — the faces are what you'd open it to look for.
                 if !showsContacts && !job.contacts.isEmpty {
                     avatarPeek(job.validContacts.isEmpty ? job.contacts : job.validContacts)
-                        .transition(LiquidMaterialize(scale: 0.7, blur: 6, anchor: .trailing))
+                        .transition(LiquidMaterialize(scale: 0.7, anchor: .trailing))
                 }
 
                 Image(systemName: "chevron.down")
@@ -511,9 +509,15 @@ private struct ContactRow: View {
     var onSend: (() -> Void)? = nil
 
 
-    private var subtitle: String? {
+    /// Always a second line, so every contact card is the same height: the job
+    /// title, else the address — unless the address is already the headline.
+    private var subtitle: String {
         if !contact.position.isEmpty { return contact.position }
-        return contact.name.isEmpty ? nil : contact.email
+        return contact.name.isEmpty ? "No name or title on file" : contact.email
+    }
+
+    private var subtitleIsPlaceholder: Bool {
+        contact.position.isEmpty && contact.name.isEmpty
     }
 
     var body: some View {
@@ -527,12 +531,11 @@ private struct ContactRow: View {
                     .font(.headline)
                     .foregroundStyle(contact.isValid ? Color.ink : Color.inkMuted)
                     .lineLimit(1)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(contact.isValid ? Color.inkMuted : Color.inkFaint)
-                        .lineLimit(1)
-                }
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(contact.isValid && !subtitleIsPlaceholder
+                                     ? Color.inkMuted : Color.inkFaint)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 8)
@@ -560,6 +563,9 @@ private struct ContactRow: View {
                     .accessibilityLabel(contact.isSent ? "Send again to \(contact.displayName)" : "Send to \(contact.displayName)")
                 }
             }
+            // The send button's height, held even for an invalid contact that has
+            // no button, so ruling someone out doesn't shrink their card.
+            .frame(minHeight: 36)
         }
         .padding(12)
         .panelAccented(cardAccent)

@@ -100,17 +100,13 @@ struct CompaniesView: View {
             // Cancelled and restarted per keystroke, which is what debounces it.
             .task(id: query) { await jobStore.searchCompanies(query: query) }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if selection.isSelecting {
-                        DoneButton { selection.exit() }
-                    } else {
-                        menu
-                    }
+                if !selection.isSelecting {
+                    ToolbarItem(placement: .topBarTrailing) { menu }
                 }
             }
             .selectionActions(
-                isSelecting: selection.isSelecting,
-                count: selection.count,
+                selection,
+                all: rows.map(\.id),
                 noun: SelectionNoun(singular: "company", plural: "companies"),
                 confirmingDelete: $confirmingDelete,
                 deleteMessage: "This permanently deletes the selected companies — and their contacts — from the shared database, for every user. This can't be undone.",
@@ -345,15 +341,21 @@ struct CompaniesView: View {
     }
 }
 
-/// A company card in the Companies list: monogram, name, an optional sector, a
-/// pin when tracked, and a fixed-size contacts-count pill that never truncates.
-/// A reply chip appears once anyone here has written back, so the catalog carries
-/// the same outreach state Home and Quick Actions do.
+/// A company card in the Companies list: monogram, name, sector, a pin when
+/// tracked, a fixed-size contacts-count pill that never truncates, and the same
+/// outreach chips Home's cards carry.
+///
+/// Always three lines, whatever the company has on file — a missing sector says
+/// so rather than collapsing the line — so every card in the catalog is the same
+/// height and the list scrolls as an even column.
 private struct CompanyRow: View {
     let job: Job
     let isTracked: Bool
 
-    private var replied: Int { job.repliedContacts.count }
+    private var sector: String? {
+        guard let sector = job.sector, !sector.isEmpty else { return nil }
+        return sector
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -373,20 +375,14 @@ private struct CompanyRow: View {
                             .transition(.scale(scale: 0.2).combined(with: .opacity))
                     }
                 }
-                if let sector = job.sector, !sector.isEmpty {
-                    Text(sector)
-                        .font(.caption)
-                        .foregroundStyle(.inkMuted)
-                        .lineLimit(1)
-                }
+                Text(sector ?? "No sector")
+                    .font(.caption)
+                    .foregroundStyle(sector == nil ? Color.inkFaint : Color.inkMuted)
+                    .lineLimit(1)
                 // Own line, for the same reason as Home's card: a long sector name
                 // beside a fixed-width chip overflowed the row on a narrow phone.
-                if replied > 0 {
-                    StatusChip(text: "\(replied) replied",
-                               systemImage: "arrowshape.turn.up.left.fill",
-                               color: .statusDone)
-                        .padding(.top, 1)
-                }
+                OutreachChips(job: job)
+                    .padding(.top, 1)
             }
 
             Spacer(minLength: 8)

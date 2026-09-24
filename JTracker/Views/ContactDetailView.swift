@@ -213,12 +213,13 @@ struct ContactDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(send.sentAt?.formatted(date: .abbreviated, time: .shortened) ?? "Sent")
                     .font(.subheadline)
-                if let subject = send.subject, !subject.isEmpty {
-                    Text(subject)
-                        .font(.caption)
-                        .foregroundStyle(.inkMuted)
-                        .lineLimit(1)
-                }
+                    .lineLimit(1)
+                // Always a second line, so the history rows are one height.
+                let subject = send.subject.flatMap { $0.isEmpty ? nil : $0 }
+                Text(subject ?? "No subject recorded")
+                    .font(.caption)
+                    .foregroundStyle(subject == nil ? Color.inkFaint : Color.inkMuted)
+                    .lineLimit(1)
             }
             Spacer()
             Image(systemName: "chevron.right")
